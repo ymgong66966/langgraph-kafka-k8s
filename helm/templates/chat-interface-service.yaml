@@ -1,0 +1,19 @@
+{{- if .Values.chatInterface.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "langgraph-kafka.fullname" . }}-chat-interface
+  labels:
+    {{- include "langgraph-kafka.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chat-interface
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: 8003
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "langgraph-kafka.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: chat-interface
+{{- end }}

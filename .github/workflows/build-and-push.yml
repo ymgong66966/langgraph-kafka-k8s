@@ -1,0 +1,141 @@
+name: Build and Push Images
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'src/**'
+      - 'docker/**'
+      - 'frontend/**'
+      - 'requirements*.txt'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    strategy:
+      matrix:
+        service:
+          - name: task-generator
+            dockerfile: docker/Dockerfile.task-generator
+            context: .
+          - name: agent-comms
+            dockerfile: docker/Dockerfile.agent-comms
+            context: .
+          - name: task-solver
+            dockerfile: docker/Dockerfile.task-solver
+            context: .
+          - name: chat-interface
+            dockerfile: docker/Dockerfile.chat-interface
+            context: .
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build frontend (for chat-interface only)
+      if: matrix.service.name == 'chat-interface'
+      run: |
+        cd frontend
+        npm install
+        npm run build
+        cd ..
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service.name }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: ${{ matrix.service.context }}
+        file: ${{ matrix.service.dockerfile }}
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        platforms: linux/amd64
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  deploy-to-k8s:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-2
+    
+    - name: Update kubeconfig
+      run: |
+        aws eks update-kubeconfig --region us-east-2 --name my-small-cluster
+    
+    - name: Install Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: '3.12.0'
+    
+    - name: Update Helm dependencies
+      run: |
+        cd helm
+        helm dependency update
+        cd ..
+    
+    - name: Deploy to Kubernetes
+      run: |
+        # Extract short SHA for image tag
+        SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+        
+        helm upgrade --install langgraph-kafka ./helm \
+          --namespace langgraph \
+          --create-namespace \
+          --values helm/values-dev.yaml \
+          --set image.repository=ghcr.io/${{ github.repository }} \
+          --set image.tag=main-${SHORT_SHA} \
+          --set env.openaiApiKey="${{ secrets.OPENAI_API_KEY }}" \
+          --set env.kafkaBootstrapServers="langgraph-system-kafka:9092" \
+          --set env.kafkaTopic="dev-langgraph-agent-events" \
+          --set env.kafkaResultsTopic="dev-langgraph-task-results" \
+          --set env.disableCheckpointer="true" \
+          --timeout 600s
+    
+    - name: Wait for deployment
+      run: |
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=langgraph-kafka -n langgraph --timeout=300s
+    
+    - name: Verify deployment
+      run: |
+        kubectl get pods -n langgraph
+        kubectl get svc -n langgraph

@@ -1,0 +1,31 @@
+# Multi-stage build for React frontend + FastAPI backend
+FROM node:18-alpine as frontend-build
+
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm install
+
+COPY frontend/ ./
+RUN npm run build
+
+# Python backend stage
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install Python dependencies
+COPY requirements-chat.txt .
+RUN pip install --no-cache-dir -r requirements-chat.txt
+
+# Copy backend code
+COPY src/chat_interface_api.py .
+
+# Copy built frontend from previous stage
+COPY --from=frontend-build /app/frontend/dist ./static
+
+# Create a simple index.html redirect in static
+RUN echo '<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=/static/index.html"></head><body>Redirecting...</body></html>' > static/index.html
+
+EXPOSE 8003
+
+CMD ["uvicorn", "chat_interface_api:app", "--host", "0.0.0.0", "--port", "8003"]

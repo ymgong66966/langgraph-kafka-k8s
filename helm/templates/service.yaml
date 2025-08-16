@@ -1,0 +1,59 @@
+{{- if .Values.agentComms.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "langgraph-kafka.fullname" . }}-agent-comms
+  labels:
+    {{- include "langgraph-kafka.labels" . | nindent 4 }}
+    component: agent-comms
+spec:
+  type: {{ .Values.agentComms.service.type }}
+  ports:
+    - port: {{ .Values.agentComms.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "langgraph-kafka.selectorLabels" . | nindent 4 }}
+    component: agent-comms
+{{- end }}
+---
+{{- if .Values.taskGenerator.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "langgraph-kafka.fullname" . }}-task-generator
+  labels:
+    {{- include "langgraph-kafka.labels" . | nindent 4 }}
+    component: task-generator
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8001
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "langgraph-kafka.selectorLabels" . | nindent 4 }}
+    component: task-generator
+{{- end }}
+---
+{{- if .Values.taskSolver.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "langgraph-kafka.fullname" . }}-task-solver
+  labels:
+    {{- include "langgraph-kafka.labels" . | nindent 4 }}
+    component: task-solver
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8002
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "langgraph-kafka.selectorLabels" . | nindent 4 }}
+    component: task-solver
+{{- end }}

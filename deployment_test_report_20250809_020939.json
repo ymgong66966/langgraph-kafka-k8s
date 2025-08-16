@@ -1,0 +1,72 @@
+{
+  "timestamp": "2025-08-09T02:09:39.544089",
+  "summary": {
+    "total_services": 5,
+    "healthy_services": 3,
+    "success_rate": 0.6
+  },
+  "results": {
+    "health_checks": {
+      "agent-comms": {
+        "status": "healthy",
+        "response": {
+          "status": "healthy",
+          "consumer_running": true,
+          "kafka_servers": "langgraph-system-kafka:9092",
+          "topic": "dev-langgraph-agent-events"
+        }
+      },
+      "task-generator": {
+        "status": "healthy",
+        "response": {
+          "status": "healthy",
+          "service": "task-generator",
+          "results_consumer_running": true,
+          "kafka_servers": "langgraph-system-kafka:9092",
+          "input_topic": "dev-langgraph-agent-events",
+          "results_topic": "dev-langgraph-task-results",
+          "openai_configured": true,
+          "task_results_count": 0
+        }
+      },
+      "task-solver": {
+        "status": "healthy",
+        "response": {
+          "status": "healthy",
+          "service": "task-solver-agent",
+          "consumer_running": true,
+          "kafka_servers": "langgraph-system-kafka:9092",
+          "input_topic": "dev-langgraph-agent-events",
+          "output_topic": "dev-langgraph-task-results",
+          "openai_configured": true,
+          "processed_tasks_count": 0
+        }
+      }
+    },
+    "kafka": {
+      "status": "error",
+      "error": "KafkaTimeoutError: Failed to update metadata after 60.0 secs."
+    },
+    "agent_communication": {
+      "status": "healthy",
+      "response": {
+        "status": "partial",
+        "code": 404
+      }
+    },
+    "task_generator": {
+      "status": "healthy",
+      "response": {
+        "status": "partial",
+        "code": 404
+      }
+    },
+    "task_solver": {
+      "status": "healthy",
+      "response": {
+        "status": "partial",
+        "code": 404
+      }
+    }
+  }
+}

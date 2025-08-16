@@ -1,0 +1,84 @@
+# Development values for langgraph-kafka
+replicaCount: 1
+
+agentComms:
+  enabled: true
+  replicaCount: 1
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+taskGenerator:
+  enabled: true
+  replicaCount: 1
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+chatInterface:
+  enabled: true
+  replicaCount: 1
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+kafka:
+  enabled: true
+  replicaCount: 1
+  persistence:
+    enabled: false  # Disable persistence for dev
+  # Use KRaft mode instead of Zookeeper for dev
+  kraft:
+    enabled: true
+  zookeeper:
+    enabled: false
+  controller:
+    replicaCount: 1
+  # CRITICAL: Disable SASL authentication for development
+  auth:
+    clientProtocol: plaintext
+    interBrokerProtocol: plaintext
+    sasl:
+      mechanisms: ""
+      users: []
+  listeners:
+    client:
+      protocol: PLAINTEXT
+    controller:
+      protocol: PLAINTEXT
+    interbroker:
+      protocol: PLAINTEXT
+
+# Development environment configuration
+env:
+  kafkaBootstrapServers: "langgraph-system-kafka:9092"
+  kafkaTopic: "dev-langgraph-agent-events"
+  kafkaResultsTopic: "dev-langgraph-task-results"
+  langgraphApiUrl: "http://langgraph-api:2024"
+  openaiApiKey: ""  # Set via helm --set env.openaiApiKey=your-key
+  disableCheckpointer: "true"  # Disable LangGraph checkpointer for dev
+
+# Enable ingress for development
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  hosts:
+    - host: langgraph-kafka.dev.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []

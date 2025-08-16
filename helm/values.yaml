@@ -1,0 +1,162 @@
+# Default values for langgraph-kafka
+replicaCount: 1
+
+image:
+  repository: langgraph-kafka
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: 
+  fsGroup: 1000
+
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# Agent Communication Service
+agentComms:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: langgraph-kafka/agent-comms
+    tag: "latest"
+  service:
+    type: ClusterIP
+    port: 8000
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+# Task Generator Service  
+taskGenerator:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: langgraph-kafka/task-generator
+    tag: "latest"
+  resources:
+    limits:
+      cpu: 300m
+      memory: 256Mi
+    requests:
+      cpu: 150m
+      memory: 128Mi
+
+# Task Solver Agent Service
+taskSolver:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: langgraph-kafka/task-solver
+    tag: "latest"
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+# Chat Interface Service  
+chatInterface:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: langgraph-kafka/chat-interface
+    tag: "latest"
+  service:
+    type: ClusterIP
+    port: 8003
+  resources:
+    limits:
+      cpu: 300m
+      memory: 256Mi
+    requests:
+      cpu: 150m
+      memory: 128Mi
+
+# Kafka Configuration
+kafka:
+  enabled: true
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    ports:
+      client: 9092
+  persistence:
+    enabled: true
+    size: 8Gi
+  # Use KRaft mode instead of Zookeeper for simplicity
+  kraft:
+    enabled: true
+  zookeeper:
+    enabled: false
+  controller:
+    replicaCount: 1
+
+# Environment Configuration
+env:
+  kafkaBootstrapServers: "langgraph-kafka-kafka:9092"
+  kafkaTopic: "langgraph-agent-events"
+  kafkaResultsTopic: "langgraph-task-results"
+  langgraphApiUrl: "http://langgraph-api:2024"
+  openaiApiKey: ""  # Set via --set env.openaiApiKey="your-key" or secrets.yaml
+
+# External Secrets (for production)
+externalSecrets:
+  enabled: false
+  secretStoreRef: "vault-backend"  # or aws-secrets-manager, etc.
+  openaiApiKey:
+    key: "openai/api-key"
+    property: "value"
+
+# Ingress
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: langgraph-kafka.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

@@ -1,0 +1,32 @@
+# Secrets and sensitive files
+secrets.yaml
+secrets-*.yaml
+*.env
+.env*
+
+# Docker build context
+.dockerignore
+
+# Helm generated files
+k8s-templates.yaml
+helm/charts/
+helm/Chart.lock
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

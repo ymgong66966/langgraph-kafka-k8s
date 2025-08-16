@@ -1,0 +1,20 @@
+apiVersion: v2
+name: langgraph-kafka
+description: A Helm chart for LangGraph Kafka communication system
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - kafka
+  - langgraph
+  - agents
+  - communication
+maintainers:
+  - name: LangGraph Team
+sources:
+  - https://github.com/langchain-ai/langgraph
+dependencies:
+  - name: kafka
+    version: "26.8.5"
+    repository: https://charts.bitnami.com/bitnami
+    condition: kafka.enabled
