@@ -322,6 +322,19 @@ async def chat_stream():
 @app.on_event("startup")
 async def startup_event():
     """Start Kafka consumer when FastAPI starts"""
+    logger.info("Starting Chat Interface API...")
+    
+    # Validate environment variables
+    if not KAFKA_BOOTSTRAP_SERVERS:
+        logger.error("KAFKA_BOOTSTRAP_SERVERS not configured")
+    if not KAFKA_RESPONSE_TOPIC:
+        logger.error("KAFKA_RESPONSE_TOPIC not configured")
+    if not OPENAI_API_KEY:
+        logger.warning("OPENAI_API_KEY not configured")
+    
+    # Start Kafka consumer with delay to ensure Kafka is ready
+    import asyncio
+    await asyncio.sleep(10)  # Wait for Kafka to be ready
     start_kafka_consumer()
     logger.info("Chat Interface API started with Kafka consumer")
 

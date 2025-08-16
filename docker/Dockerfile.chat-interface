@@ -1,12 +1,20 @@
 # Multi-stage build for React frontend + FastAPI backend
-FROM node:18-alpine as frontend-build
+FROM node:18-alpine AS frontend-build
 
 WORKDIR /app/frontend
-COPY frontend/package*.json ./
-RUN npm install
 
+# Copy package files first for better caching
+COPY frontend/package*.json ./
+RUN npm ci --only=production
+
+# Copy frontend source code
 COPY frontend/ ./
-RUN npm run build
+
+# Build frontend and validate output
+RUN npm run build && \
+    ls -la dist && \
+    test -f dist/index.html && \
+    echo "✅ Frontend build successful"
 
 # Python backend stage
 FROM python:3.11-slim
@@ -14,18 +22,25 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install Python dependencies
-COPY requirements-chat.txt .
-RUN pip install --no-cache-dir -r requirements-chat.txt
+COPY requirements-chat-interface.txt .
+RUN pip install --no-cache-dir -r requirements-chat-interface.txt
 
 # Copy backend code
 COPY src/chat_interface_api.py .
 
-# Copy built frontend from previous stage
+# Copy built frontend from previous stage with validation
 COPY --from=frontend-build /app/frontend/dist ./static
 
-# Create a simple index.html redirect in static
-RUN echo '<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=/static/index.html"></head><body>Redirecting...</body></html>' > static/index.html
+# Validate frontend files were copied correctly
+RUN ls -la static/ && \
+    test -f static/index.html && \
+    echo "✅ Frontend files copied successfully"
+
+# Create health check endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8003/health || exit 1
 
 EXPOSE 8003
 
-CMD ["uvicorn", "chat_interface_api:app", "--host", "0.0.0.0", "--port", "8003"]
+# Use exec form for proper signal handling
+CMD ["uvicorn", "chat_interface_api:app", "--host", "0.0.0.0", "--port", "8003", "--access-log"]

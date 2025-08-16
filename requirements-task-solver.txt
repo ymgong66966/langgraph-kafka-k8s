@@ -1,0 +1,10 @@
+# Dependencies for task-solver service
+fastapi==0.104.1
+uvicorn==0.24.0
+kafka-python==2.0.2
+langchain==0.2.16
+langchain-openai==0.1.25
+langgraph==0.2.38
+langgraph-sdk==0.1.32
+requests==2.31.0
+pydantic==2.5.0
