@@ -295,20 +295,23 @@ async def generate_task(request: TaskRequest, background_tasks: BackgroundTasks)
                 "generated_task": None
             }, config={"configurable": {"thread_id": f"task-gen-{hash(request.conversation_history) % 10000}"}})
         
-        logger.info(f"LangGraph result structure: {result}")
-        logger.info(f"Result keys: {list(result.keys()) if result else 'None'}")
-        
         if "Error:" in result.get("generated_task", ""):
             raise HTTPException(status_code=500, detail=result["generated_task"])
         
-        action = result.get("action")
-        decision_data = result.get("decision_data")
+        # Parse the generated_task JSON to get action and decision data
+        generated_task_json = result.get("generated_task", "")
+        if not generated_task_json:
+            raise HTTPException(status_code=500, detail="No generated task found")
         
-        logger.info(f"Extracted action: {action}")
-        logger.info(f"Extracted decision_data: {decision_data}")
+        try:
+            decision_data = json.loads(generated_task_json)
+            action = decision_data.get("action")
+            logger.info(f"Parsed decision: action={action}, decision_data={decision_data}")
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=500, detail=f"Invalid generated task JSON: {e}")
         
-        if not action or not decision_data:
-            raise HTTPException(status_code=500, detail=f"Failed to get decision data. Action: {action}, Decision data: {decision_data}, Full result: {result}")
+        if not action:
+            raise HTTPException(status_code=500, detail=f"No action found in decision data: {decision_data}")
         
         task_gen = TaskGenerator()
         
