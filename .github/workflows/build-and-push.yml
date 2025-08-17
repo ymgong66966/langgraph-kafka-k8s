@@ -123,8 +123,10 @@ jobs:
       with:
         version: '3.12.0'
     
-    - name: Update Helm dependencies
+    - name: Setup Helm repositories
       run: |
+        helm repo add bitnami https://charts.bitnami.com/bitnami
+        helm repo update
         cd helm
         helm dependency update
         cd ..
@@ -179,6 +181,9 @@ jobs:
           --wait --timeout=300s
         
         echo "✅ External Kafka deployed"
+        
+        # Wait for external Kafka to be ready before deploying main app
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=kafka -n langgraph-system --timeout=300s
         
         # Use upgrade --install to handle existing resources
         helm upgrade --install langgraph-kafka ./helm \
