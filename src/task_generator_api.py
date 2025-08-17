@@ -67,12 +67,21 @@ class TaskGenerator:
     def __init__(self):
         global producer
         if producer is None:
-            producer = KafkaProducer(
-                bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-                value_serializer=lambda v: json.dumps(v).encode('utf-8'),
-                retries=3,
-                acks='all'
-            )
+            try:
+                logger.info(f"Initializing Kafka producer with servers: {KAFKA_BOOTSTRAP_SERVERS}")
+                producer = KafkaProducer(
+                    bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+                    value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+                    retries=3,
+                    acks='all',
+                    security_protocol='PLAINTEXT',
+                    request_timeout_ms=30000,
+                    connections_max_idle_ms=600000
+                )
+                logger.info("Kafka producer initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize Kafka producer: {e}")
+                raise
         self.producer = producer
         
     def send_to_kafka(self, task_data: dict) -> bool:
@@ -307,9 +316,17 @@ async def generate_task(request: TaskRequest, background_tasks: BackgroundTasks)
             }
             
             def send_response_bg():
-                success = task_gen.send_response_to_chat(response_data)
-                if not success:
-                    logger.error("Failed to send direct response to chat")
+                try:
+                    logger.info(f"Background task: Attempting to send response: {response_data}")
+                    logger.info(f"Using KAFKA_RESULTS_TOPIC: {KAFKA_RESULTS_TOPIC}")
+                    success = task_gen.send_response_to_chat(response_data)
+                    if not success:
+                        logger.error("Failed to send direct response to chat")
+                    else:
+                        logger.info("Successfully sent direct response to chat via Kafka")
+                except Exception as e:
+                    logger.error(f"Background task exception: {e}")
+                    raise
             
             background_tasks.add_task(send_response_bg)
             
@@ -345,6 +362,10 @@ async def generate_task(request: TaskRequest, background_tasks: BackgroundTasks)
         raise HTTPException(status_code=500, detail="Failed to parse generated task")
     except Exception as e:
         logger.error(f"Task generation error: {e}")
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Error args: {e.args}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/send-task-to-kafka")
