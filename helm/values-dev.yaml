@@ -1,14 +1,17 @@
 # Development values for langgraph-kafka
 replicaCount: 1
 
-# Disable our serviceAccount creation since Kafka chart provides one
+# Enable serviceAccount creation since using external Kafka
 serviceAccount:
-  create: false
+  create: true
   name: "langgraph-kafka"
 
 agentComms:
   enabled: true
   replicaCount: 1
+  image:
+    repository: ghcr.io/ymgong66966/langgraph-kafka-k8s/agent-comms
+    tag: main-f378acd
   resources:
     limits:
       cpu: 200m
@@ -20,6 +23,9 @@ agentComms:
 taskGenerator:
   enabled: true
   replicaCount: 1
+  image:
+    repository: ghcr.io/ymgong66966/langgraph-kafka-k8s/task-generator
+    tag: main-f378acd
   resources:
     limits:
       cpu: 200m
@@ -31,6 +37,9 @@ taskGenerator:
 chatInterface:
   enabled: true
   replicaCount: 1
+  image:
+    repository: ghcr.io/ymgong66966/langgraph-kafka-k8s/chat-interface
+    tag: main-f378acd
   service:
     type: ClusterIP
     port: 8003
@@ -43,11 +52,20 @@ chatInterface:
       memory: 128Mi
 
 kafka:
-  enabled: true
+  enabled: false
   replicaCount: 1
   persistence:
-    enabled: false  # Disable persistence for dev
+    enabled: false
     storageClass: "gp2"
+  controller:
+    replicaCount: 1
+    persistence:
+      enabled: false
+      storageClass: "gp2"
+  broker:
+    persistence:
+      enabled: false
+      storageClass: "gp2"
   # Use KRaft mode instead of Zookeeper for dev
   kraft:
     enabled: true
@@ -70,9 +88,23 @@ kafka:
     interbroker:
       protocol: PLAINTEXT
 
+taskSolver:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ghcr.io/ymgong66966/langgraph-kafka-k8s/task-solver
+    tag: main-f378acd
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
 # Development environment configuration
 env:
-  kafkaBootstrapServers: "langgraph-kafka:9092"
+  kafkaBootstrapServers: "langgraph-system-kafka.langgraph-system.svc.cluster.local:9092"
   kafkaTopic: "dev-langgraph-agent-events"
   kafkaResultsTopic: "dev-langgraph-task-results"
   langgraphApiUrl: "http://langgraph-api:2024"
