@@ -10,4 +10,5 @@ data:
   KAFKA_INPUT_TOPIC: {{ .Values.env.kafkaTopic | quote }}
   KAFKA_OUTPUT_TOPIC: {{ .Values.env.kafkaResultsTopic | quote }}
   KAFKA_RESULTS_TOPIC: {{ .Values.env.kafkaResultsTopic | quote }}
+  KAFKA_RESPONSE_TOPIC: {{ .Values.env.kafkaResultsTopic | quote }}
   LANGGRAPH_API_URL: {{ .Values.env.langgraphApiUrl | quote }}
