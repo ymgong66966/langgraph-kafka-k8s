@@ -212,7 +212,7 @@ async def send_message(message: ChatMessage):
     
     # Always send to task generator (as per your workflow)
     try:
-        task_generator_url = "http://langgraph-system-langgraph-kafka-task-generator:8001"
+        task_generator_url = "http://langgraph-kafka-task-generator:8001"
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Send to task generator with conversation history format
