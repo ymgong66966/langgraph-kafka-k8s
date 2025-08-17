@@ -9,7 +9,7 @@ on:
       - 'frontend/**'
       - 'requirements*.txt'
       - 'helm/**'
-      - 'helm/**'
+      - '.github/**'
   workflow_dispatch:
 
 env:
@@ -129,14 +129,33 @@ jobs:
         helm dependency update
         cd ..
     
+    - name: Clean up previous deployment
+      run: |
+        echo "🧹 Cleaning up previous deployment..."
+        # Remove existing Helm release (ignore if not found)
+        helm uninstall langgraph-kafka -n langgraph --ignore-not-found || true
+        
+        # Delete namespace to ensure clean state
+        kubectl delete namespace langgraph --ignore-not-found --timeout=60s || true
+        
+        # Wait a moment for cleanup to complete
+        sleep 10
+        
+        echo "✅ Cleanup completed"
+    
     - name: Deploy to Kubernetes
       run: |
+        echo "🚀 Starting clean deployment..."
+        
         # Extract short SHA for image tag
         SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
         
-        helm upgrade --install langgraph-kafka ./helm \
+        # Create namespace first
+        kubectl create namespace langgraph
+        
+        # Install with fresh state
+        helm install langgraph-kafka ./helm \
           --namespace langgraph \
-          --create-namespace \
           --values helm/values-dev.yaml \
           --set image.repository=ghcr.io/${{ github.repository }} \
           --set image.tag=main-${SHORT_SHA} \
@@ -146,6 +165,8 @@ jobs:
           --set env.kafkaResultsTopic="dev-langgraph-task-results" \
           --set env.disableCheckpointer="true" \
           --timeout 600s
+          
+        echo "✅ Deployment completed"
     
     - name: Wait for deployment
       run: |
