@@ -34,6 +34,9 @@ package-lock.json
 frontend/dist/
 frontend/node_modules/
 
+# Test environments
+test-env-*/
+
 # IDE
 .vscode/
 .idea/
