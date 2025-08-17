@@ -9,6 +9,7 @@ on:
       - 'frontend/**'
       - 'requirements*.txt'
       - 'helm/**'
+      - 'helm/**'
   workflow_dispatch:
 
 env:
