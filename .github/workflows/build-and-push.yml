@@ -160,8 +160,25 @@ jobs:
         # Extract short SHA for image tag
         SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
         
-        # Create namespace if it doesn't exist
+        # Create namespaces if they don't exist
         kubectl create namespace langgraph --dry-run=client -o yaml | kubectl apply -f -
+        kubectl create namespace langgraph-system --dry-run=client -o yaml | kubectl apply -f -
+        
+        # Deploy external Kafka first
+        echo "📦 Deploying external Kafka..."
+        helm upgrade --install langgraph-system-kafka bitnami/kafka \
+          --namespace langgraph-system \
+          --set persistence.enabled=false \
+          --set controller.persistence.enabled=false \
+          --set kraft.enabled=true \
+          --set zookeeper.enabled=false \
+          --set auth.clientProtocol=plaintext \
+          --set auth.interBrokerProtocol=plaintext \
+          --set auth.sasl.mechanisms="" \
+          --set listeners.client.protocol=PLAINTEXT \
+          --wait --timeout=300s
+        
+        echo "✅ External Kafka deployed"
         
         # Use upgrade --install to handle existing resources
         helm upgrade --install langgraph-kafka ./helm \
@@ -176,7 +193,7 @@ jobs:
           --set chatInterface.image.repository=ghcr.io/${{ github.repository }}/chat-interface \
           --set chatInterface.image.tag=main-${SHORT_SHA} \
           --set env.openaiApiKey="${{ secrets.OPENAI_API_KEY }}" \
-          --set env.kafkaBootstrapServers="langgraph-system-kafka:9092" \
+          --set env.kafkaBootstrapServers="langgraph-system-kafka.langgraph-system.svc.cluster.local:9092" \
           --set env.kafkaTopic="dev-langgraph-agent-events" \
           --set env.kafkaResultsTopic="dev-langgraph-task-results" \
           --set env.disableCheckpointer="true" \
