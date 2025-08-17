@@ -167,8 +167,14 @@ jobs:
         helm upgrade --install langgraph-kafka ./helm \
           --namespace langgraph \
           --values helm/values-dev.yaml \
-          --set image.repository=ghcr.io/${{ github.repository }} \
-          --set image.tag=main-${SHORT_SHA} \
+          --set agentComms.image.repository=ghcr.io/${{ github.repository }}/agent-comms \
+          --set agentComms.image.tag=main-${SHORT_SHA} \
+          --set taskGenerator.image.repository=ghcr.io/${{ github.repository }}/task-generator \
+          --set taskGenerator.image.tag=main-${SHORT_SHA} \
+          --set taskSolver.image.repository=ghcr.io/${{ github.repository }}/task-solver \
+          --set taskSolver.image.tag=main-${SHORT_SHA} \
+          --set chatInterface.image.repository=ghcr.io/${{ github.repository }}/chat-interface \
+          --set chatInterface.image.tag=main-${SHORT_SHA} \
           --set env.openaiApiKey="${{ secrets.OPENAI_API_KEY }}" \
           --set env.kafkaBootstrapServers="langgraph-system-kafka:9092" \
           --set env.kafkaTopic="dev-langgraph-agent-events" \
