@@ -160,11 +160,11 @@ jobs:
         # Extract short SHA for image tag
         SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
         
-        # Create namespace first
-        kubectl create namespace langgraph
+        # Create namespace if it doesn't exist
+        kubectl create namespace langgraph --dry-run=client -o yaml | kubectl apply -f -
         
-        # Install with fresh state
-        helm install langgraph-kafka ./helm \
+        # Use upgrade --install to handle existing resources
+        helm upgrade --install langgraph-kafka ./helm \
           --namespace langgraph \
           --values helm/values-dev.yaml \
           --set image.repository=ghcr.io/${{ github.repository }} \
