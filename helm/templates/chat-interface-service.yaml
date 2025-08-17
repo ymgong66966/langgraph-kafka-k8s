@@ -7,7 +7,7 @@ metadata:
     {{- include "langgraph-kafka.labels" . | nindent 4 }}
     app.kubernetes.io/component: chat-interface
 spec:
-  type: {{ .Values.service.type }}
+  type: {{ .Values.chatInterface.service.type }}
   ports:
     - port: 8003
       targetPort: http
