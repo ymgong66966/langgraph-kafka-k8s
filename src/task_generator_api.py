@@ -295,14 +295,20 @@ async def generate_task(request: TaskRequest, background_tasks: BackgroundTasks)
                 "generated_task": None
             }, config={"configurable": {"thread_id": f"task-gen-{hash(request.conversation_history) % 10000}"}})
         
+        logger.info(f"LangGraph result structure: {result}")
+        logger.info(f"Result keys: {list(result.keys()) if result else 'None'}")
+        
         if "Error:" in result.get("generated_task", ""):
             raise HTTPException(status_code=500, detail=result["generated_task"])
         
         action = result.get("action")
         decision_data = result.get("decision_data")
         
+        logger.info(f"Extracted action: {action}")
+        logger.info(f"Extracted decision_data: {decision_data}")
+        
         if not action or not decision_data:
-            raise HTTPException(status_code=500, detail="Failed to get decision data")
+            raise HTTPException(status_code=500, detail=f"Failed to get decision data. Action: {action}, Decision data: {decision_data}, Full result: {result}")
         
         task_gen = TaskGenerator()
         
