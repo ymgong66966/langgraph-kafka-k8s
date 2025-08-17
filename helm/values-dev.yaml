@@ -47,6 +47,7 @@ kafka:
   replicaCount: 1
   persistence:
     enabled: false  # Disable persistence for dev
+    storageClass: "gp2"
   # Use KRaft mode instead of Zookeeper for dev
   kraft:
     enabled: true
@@ -71,7 +72,7 @@ kafka:
 
 # Development environment configuration
 env:
-  kafkaBootstrapServers: "langgraph-system-kafka:9092"
+  kafkaBootstrapServers: "langgraph-kafka:9092"
   kafkaTopic: "dev-langgraph-agent-events"
   kafkaResultsTopic: "dev-langgraph-task-results"
   langgraphApiUrl: "http://langgraph-api:2024"

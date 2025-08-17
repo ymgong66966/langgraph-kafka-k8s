@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: chat-interface
-        image: "{{ .Values.image.repository }}/chat-interface:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        image: "{{ .Values.chatInterface.image.repository }}:{{ .Values.chatInterface.image.tag | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         ports:
         - name: http
