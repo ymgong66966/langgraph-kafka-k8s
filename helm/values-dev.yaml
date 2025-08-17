@@ -1,6 +1,11 @@
 # Development values for langgraph-kafka
 replicaCount: 1
 
+# Disable our serviceAccount creation since Kafka chart provides one
+serviceAccount:
+  create: false
+  name: "langgraph-kafka"
+
 agentComms:
   enabled: true
   replicaCount: 1
