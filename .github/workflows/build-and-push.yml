@@ -8,6 +8,7 @@ on:
       - 'docker/**'
       - 'frontend/**'
       - 'requirements*.txt'
+      - 'helm/**'
   workflow_dispatch:
 
 env:
