@@ -300,7 +300,7 @@ async def generate_task(request: TaskRequest, background_tasks: BackgroundTasks)
         
         # Parse the generated_task JSON to get action and decision data
         logger.info(f"llm response for logging: {result}")
-        generated_task_json = result.get("decision_data", "")
+        generated_task_json = result.get("generated_task", "")
         logger.info(f"Generated decision data for logging: {generated_task_json}")
         if not generated_task_json:
             raise HTTPException(status_code=500, detail="No generated task found")
