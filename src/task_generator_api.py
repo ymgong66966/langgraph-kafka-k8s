@@ -72,10 +72,10 @@ class TaskGenerator:
                 producer = KafkaProducer(
                     bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
                     value_serializer=lambda v: json.dumps(v).encode('utf-8'),
-                    retries=3,
-                    acks='all',
+                    retries=1,
+                    acks=1,  # Only wait for leader acknowledgment (faster)
                     security_protocol='PLAINTEXT',
-                    request_timeout_ms=30000,
+                    request_timeout_ms=5000,  # Reduce timeout to 5 seconds
                     connections_max_idle_ms=600000
                 )
                 logger.info("Kafka producer initialized successfully")
