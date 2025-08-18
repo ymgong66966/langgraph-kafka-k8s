@@ -277,7 +277,7 @@ async def health_check():
         "task_results_count": len(task_results)
     }
 
-@app.post("/generate-task", response_model=TaskResponse)
+@app.post("/generate-task")
 async def generate_task(request: TaskRequest, background_tasks: BackgroundTasks):
     """Generate a task from conversation history and send to Kafka"""
     try:
@@ -299,7 +299,8 @@ async def generate_task(request: TaskRequest, background_tasks: BackgroundTasks)
             raise HTTPException(status_code=500, detail=result["generated_task"])
         
         # Parse the generated_task JSON to get action and decision data
-        generated_task_json = result.get("generated_task", "")
+        generated_task_json = result.get("decision_data", "")
+        logger.info(f"Generated decision data for logging: {generated_task_json}")
         if not generated_task_json:
             raise HTTPException(status_code=500, detail="No generated task found")
         
