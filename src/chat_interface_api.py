@@ -99,8 +99,8 @@ def kafka_response_consumer():
                 bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
                 value_deserializer=lambda x: json.loads(x.decode('utf-8')),
                 group_id='chat-interface-consumer',
-                auto_offset_reset='latest',  # Only get new messages
-                consumer_timeout_ms=1000,  # Timeout for checking if we should exit
+                auto_offset_reset='earliest',  # Get all messages from beginning
+                # consumer_timeout_ms removed - let consumer run indefinitely
                 security_protocol='PLAINTEXT',  # Disable SASL for development
                 enable_auto_commit=True,
                 request_timeout_ms=30000,
@@ -120,10 +120,16 @@ def kafka_response_consumer():
             time.sleep(5)  # Wait before retry
     
     try:
+        logger.info("Starting Kafka message consumption loop")
+        poll_count = 0
         for message in consumer:
+            poll_count += 1
+            if poll_count % 10 == 0:
+                logger.info(f"Consumer polling: {poll_count} polls completed")
             try:
                 kafka_message = message.value
                 logger.info(f"Received Kafka message: {kafka_message}")
+                logger.info(f"Message offset: {message.offset}, partition: {message.partition}")
                 
                 # Transform Kafka message to chat message format
                 chat_message = {
