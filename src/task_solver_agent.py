@@ -296,7 +296,7 @@ Provide a detailed, helpful response that addresses the user's needs. If you use
 
     async def process_task(self, task_data: dict) -> dict:
         """Process a task using MCP LangGraph agent and return the solution"""
-        task_id = task_data.get('task_id', str(uuid.uuid4()))
+        task_id = task_data.get('task_id') or str(uuid.uuid4())
         timestamp = datetime.now().isoformat()
         
         # Extract messages and user info from task data
