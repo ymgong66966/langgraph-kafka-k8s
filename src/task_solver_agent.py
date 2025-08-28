@@ -55,7 +55,7 @@ class TaskRequest(BaseModel):
 class TaskSolution(BaseModel):
     task_id: str
     messages: List[Dict[str, Any]]
-    user_info: str
+    user_info: Optional[str] = None
     solution: str
     timestamp: str
     solver_agent: str = "langgraph-mcp-task-solver"
@@ -302,7 +302,7 @@ Provide a detailed, helpful response that addresses the user's needs. If you use
         # Extract messages and user info from task data
         messages_data = task_data.get('messages', [])
         user_id = task_data.get('user_id')
-        user_info = task_data.get('user_info', '')
+        user_info = task_data.get('user_info') or None
         
         # Get user info if user_id provided but user_info is empty
         if user_id and not user_info:
