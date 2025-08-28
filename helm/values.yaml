@@ -103,6 +103,10 @@ env:
   kafkaResultsTopic: "langgraph-task-results"
   langgraphApiUrl: "http://langgraph-api:2024"
   openaiApiKey: ""  # Set via --set env.openaiApiKey="your-key" or secrets.yaml
+  langchainTracing: "true"
+  langchainEndpoint: "https://api.smith.langchain.com"
+  langchainApiKey: ""  # Set via --set env.langchainApiKey="your-key" or secrets.yaml
+  langsmithApiKey: ""  # Set via --set env.langsmithApiKey="your-key" or secrets.yaml
 
 # External Secrets (for production)
 externalSecrets:

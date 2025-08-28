@@ -193,6 +193,10 @@ jobs:
           --set chatInterface.image.repository=ghcr.io/${{ github.repository }}/chat-interface \
           --set chatInterface.image.tag=main-${SHORT_SHA} \
           --set env.openaiApiKey="${{ secrets.OPENAI_API_KEY }}" \
+          --set env.langchainTracing="true" \
+          --set env.langchainEndpoint="https://api.smith.langchain.com" \
+          --set env.langchainApiKey="${{ secrets.LANGCHAIN_API_KEY }}" \
+          --set env.langsmithApiKey="${{ secrets.LANGSMITH_API_KEY }}" \
           --set env.kafkaBootstrapServers="langgraph-system-kafka.langgraph-system.svc.cluster.local:9092" \
           --set env.kafkaTopic="dev-langgraph-agent-events" \
           --set env.kafkaResultsTopic="dev-langgraph-task-results" \
