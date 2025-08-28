@@ -3,24 +3,25 @@ import json
 import logging
 import asyncio
 import threading
+import requests
+import uuid
 from typing import Dict, Any, Optional, TypedDict, List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from langchain.chains import LLMChain
-from langgraph.graph import END, StateGraph
-from langgraph.constants import START
-from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError
 from contextlib import asynccontextmanager
-import uuid
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Import MCP LangGraph Agent
+from fastmcp import Client
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.messages import ToolMessage
+from typing import Literal, Annotated
+from operator import add
 
 # Configuration
 KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka-service:9092')
@@ -28,46 +29,38 @@ KAFKA_INPUT_TOPIC = os.getenv('KAFKA_TOPIC', 'dev-langgraph-agent-events')
 KAFKA_OUTPUT_TOPIC = os.getenv('KAFKA_RESULTS_TOPIC', 'dev-langgraph-task-results')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
-TASK_SOLVER_PROMPT = """
-You are a helpful task-solving agent. You will receive a task with the following information:
-- Task Name: {task_name}
-- Task Description: {task_description}
-- Context: {context}
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-Your job is to provide a helpful response to complete or address this task.
-Be specific, actionable, and comprehensive in your response.
-
-Provide a detailed solution or answer for the given task.
-"""
-
+# Updated State for MCP integration
 class TaskSolverState(TypedDict):
     task_id: str
-    task_name: str
-    task_description: str
-    context: str
+    messages: List[BaseMessage]
+    user_info: str
     solution: Optional[str]
     timestamp: str
 
 class TaskRequest(BaseModel):
     task_id: Optional[str] = None
-    task_name: str
-    task_description: str
-    context: str
+    messages: List[Dict[str, Any]]  # Changed from task_name/description
+    user_id: Optional[str] = None
+    user_info: Optional[str] = None
 
 class TaskSolution(BaseModel):
     task_id: str
-    task_name: str
-    task_description: str
-    context: str
+    messages: List[Dict[str, Any]]
+    user_info: str
     solution: str
     timestamp: str
-    solver_agent: str = "langgraph-task-solver"
+    solver_agent: str = "langgraph-mcp-task-solver"
 
-# Global state
-consumer_running = False
-producer = None
-consumer_thread = None
-processed_tasks = {}
+# MCP Agent State (copied from firecrawl_mcp_graph.py)
+class AgentState(TypedDict):
+    """State for the MCP-powered LangGraph agent"""
+    messages: Annotated[List[BaseMessage], add]
+    user_info: str
+    tool_call_count: int
+    max_tool_calls: int
 
 class TaskSolverAgent:
     def __init__(self):
@@ -80,107 +73,287 @@ class TaskSolverAgent:
                 acks='all'
             )
         self.producer = producer
-        self.graph = self.create_solver_graph()
         
-    def send_result_to_kafka(self, result_data: dict) -> bool:
-        """Send task result to Kafka output topic"""
-        try:
-            future = self.producer.send(KAFKA_OUTPUT_TOPIC, value=result_data)
-            record_metadata = future.get(timeout=10)
-            logger.info(f"Task result sent to Kafka topic {record_metadata.topic} partition {record_metadata.partition}")
-            return True
-        except KafkaError as e:
-            logger.error(f"Failed to send result to Kafka: {e}")
-            return False
-
-    async def solve_task_node(self, state: TaskSolverState) -> Dict[str, Any]:
-        """Solve the task using LLM"""
-        if not OPENAI_API_KEY:
-            logger.error("OpenAI API key not configured")
-            return {"solution": "Error: OpenAI API key not configured"}
+        # MCP Agent configuration
+        self.openai_api_key = OPENAI_API_KEY
+        self.max_tool_calls = 4
+        self.mcp_server_url = "http://a7a09ec61615e46a7892d050e514c11e-1977986439.us-east-2.elb.amazonaws.com/mcp"
         
-        llm = ChatOpenAI(
-            temperature=0.7,
-            api_key=OPENAI_API_KEY,
-            model="gpt-4o-mini"
+        # Initialize LLM
+        self.llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            api_key=self.openai_api_key,
+            temperature=0.1
         )
+        self.memory = MemorySaver()
+        self.graph = None
         
-        prompt = PromptTemplate(
-            template=TASK_SOLVER_PROMPT,
-            input_variables=["task_name", "task_description", "context"]
-        )
-        
-        chain = LLMChain(llm=llm, prompt=prompt)
-        
+    def get_user_info(self, user_id: str) -> str:
+        """Retrieve user information from API"""
         try:
-            solution = await chain.arun(
-                task_name=state["task_name"],
-                task_description=state["task_description"],
-                context=state["context"]
-            )
+            url = "https://h9d1ldlv65.execute-api.us-east-2.amazonaws.com/dev/getuser-mcp"
+            headers = {
+                "x-api-key": "iwja4JC4q765W7VlfqBVx2RAYSISs9lPwEyqNvfh",
+                "Content-Type": "application/json"
+            }
+            payload = {"userId": user_id}
             
-            logger.info(f"Generated solution for task {state['task_id']}: {solution[:100]}...")
-            return {"solution": solution}
+            response = requests.post(url, headers=headers, data=json.dumps(payload))
             
+            if response.status_code == 200:
+                user_data = response.json()
+                return json.dumps(user_data)
+            else:
+                logger.warning(f"Failed to get user info for {user_id}: {response.status_code}")
+                return f"User ID: {user_id}"
+                
         except Exception as e:
-            logger.error(f"Error generating solution: {e}")
-            return {"solution": f"Error generating solution: {str(e)}"}
+            logger.error(f"Error retrieving user info: {e}")
+            return f"User ID: {user_id}"
+    
+    def sanitize_tool_name(self, name: str) -> str:
+        """Sanitize tool name to match OpenAI pattern ^[a-zA-Z0-9_-]+$"""
+        import re
+        sanitized = name.replace('/', '_').replace(' ', '_')
+        sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', sanitized)
+        sanitized = re.sub(r'_+', '_', sanitized).strip('_')
+        return sanitized
+    
+    def convert_fastmcp_tool_to_openai_format(self, tool):
+        """Convert FastMCP tool to OpenAI function format"""
+        sanitized_name = self.sanitize_tool_name(tool.name)
+        return {
+            "type": "function",
+            "function": {
+                "name": sanitized_name,
+                "description": tool.description,
+                "parameters": tool.inputSchema
+            }
+        }
+        
+    def should_continue(self, state: AgentState) -> Literal["tools", "final_answer"]:
+        """Determine whether to continue with tools or provide final answer"""
+        last_message = state["messages"][-1]
+        
+        if state["tool_call_count"] >= state["max_tool_calls"]:
+            return "final_answer"
+        
+        if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+            return "tools"
+        
+        return "final_answer"
+    
+    async def agent_node(self, state: AgentState) -> Dict[str, Any]:
+        """Main agent node that decides whether to use tools or provide answer"""
+        messages = state["messages"]
+        user_info = state["user_info"]
+        tool_call_count = state["tool_call_count"]
+        max_calls = state["max_tool_calls"]
+        
+        # Use MCP client to get tools and bind to LLM
+        client = Client({
+            "enhanced_mcp": {
+                "url": self.mcp_server_url,
+                "transport": "streamable-http"
+            }
+        })
+        
+        async with client:
+            fastmcp_tools = await client.list_tools()
+            tools = [self.convert_fastmcp_tool_to_openai_format(tool) for tool in fastmcp_tools]
+            self.tool_name_mapping = {
+                self.sanitize_tool_name(tool.name): tool.name 
+                for tool in fastmcp_tools
+            }
+        
+        # Only add system message at the very beginning
+        has_ai_messages = any(isinstance(msg, AIMessage) for msg in messages)
+        
+        if not has_ai_messages and len(messages) == 1 and isinstance(messages[0], HumanMessage):
+            system_prompt = f"""You are an intelligent task-solving assistant with access to powerful web intelligence tools.
 
-    def create_solver_graph(self) -> StateGraph:
-        """Create and return the task solver graph"""
-        workflow = StateGraph(TaskSolverState)
+User Information: {user_info}
+
+Available MCP Tools:
+- online_general_online_search_with_one_query: Search the web with Firecrawl
+- online_google_places_search: Find places using Google Places API
+- online_website_map: Map websites and find relevant URLs using vector search
+- online_scrape_multiple_websites_after_website_map: Scrape multiple websites concurrently
+- add: Add two numbers
+- find_products: Find products
+
+Tool Call Status: {tool_call_count}/{max_calls} calls used.
+
+Instructions:
+1. If you need more information to answer the user's question and haven't reached the tool limit, use the appropriate tools.
+2. If you've used {max_calls} tools or have enough information, provide a comprehensive final answer.
+3. Choose tools strategically - use search for general info, places for locations, website mapping for specific domains.
+4. Always explain your reasoning and provide detailed, helpful responses.
+5. You MUST output your reasoning in the content field AND make tool calls if needed.
+"""
+            messages_with_system = [HumanMessage(content=system_prompt)] + messages
+        else:
+            messages_with_system = messages
+        
+        # Bind tools to the model if we haven't hit the limit
+        if tool_call_count < max_calls and tools:
+            model_with_tools = self.llm.bind(tools=tools)
+        else:
+            model_with_tools = self.llm
+        
+        response = await model_with_tools.ainvoke(messages_with_system)
+        return {"messages": [response]}
+    
+    async def tool_node(self, state: AgentState) -> Dict[str, Any]:
+        """Execute MCP tools and increment counter"""
+        client = Client({
+            "enhanced_mcp": {
+                "url": self.mcp_server_url,
+                "transport": "streamable-http"
+            }
+        })
+        
+        async with client:
+            last_message = state["messages"][-1]
+            tool_messages = []
+            tools_used = 0
+            
+            for tool_call in last_message.tool_calls:
+                try:
+                    sanitized_name = tool_call["name"]
+                    original_name = getattr(self, 'tool_name_mapping', {}).get(sanitized_name, sanitized_name)
+                    
+                    observation = await client.call_tool(original_name, tool_call["args"])
+                    
+                    tool_message = ToolMessage(
+                        content=str(observation),
+                        tool_call_id=tool_call["id"]
+                    )
+                    tool_messages.append(tool_message)
+                    tools_used += 1
+                    
+                except Exception as e:
+                    error_message = ToolMessage(
+                        content=f"Error executing tool {tool_call['name']}: {str(e)}",
+                        tool_call_id=tool_call["id"]
+                    )
+                    tool_messages.append(error_message)
+                    tools_used += 1
+            
+            return {
+                "messages": tool_messages,
+                "tool_call_count": state["tool_call_count"] + tools_used
+            }
+    
+    async def final_answer_node(self, state: AgentState) -> Dict[str, Any]:
+        """Generate final answer when tool limit is reached or no tools needed"""
+        messages = state["messages"]
+        user_info = state["user_info"]
+        tool_call_count = state["tool_call_count"]
+        
+        final_prompt = f"""Based on the conversation and any tool results gathered, provide a comprehensive final answer to the user's question.
+
+User Information: {user_info}
+Tools used: {tool_call_count}/{state["max_tool_calls"]}
+
+Provide a detailed, helpful response that addresses the user's needs. If you used tools, synthesize the information gathered. If you reached the tool limit, acknowledge this and provide the best answer possible with available information.
+"""
+        
+        messages_with_prompt = messages + [HumanMessage(content=final_prompt)]
+        response = await self.llm.ainvoke(messages_with_prompt)
+        
+        return {"messages": [response]}
+
+    async def create_solver_graph(self) -> StateGraph:
+        """Create and return the MCP-powered task solver graph"""
+        workflow = StateGraph(AgentState)
         
         # Add nodes
-        workflow.add_node("solve_task", self.solve_task_node)
+        workflow.add_node("agent", self.agent_node)
+        workflow.add_node("tools", self.tool_node)
+        workflow.add_node("final_answer", self.final_answer_node)
         
         # Add edges
-        workflow.add_edge(START, "solve_task")
-        workflow.add_edge("solve_task", END)
+        workflow.add_edge(START, "agent")
+        workflow.add_conditional_edges(
+            "agent",
+            self.should_continue,
+            {
+                "tools": "tools",
+                "final_answer": "final_answer"
+            }
+        )
+        workflow.add_edge("tools", "agent")
+        workflow.add_edge("final_answer", END)
         
-        # Add checkpointer for state persistence
-        # checkpointer = MemorySaver()
-        # return workflow.compile(checkpointer=checkpointer)
-        return workflow.compile()
+        return workflow.compile(checkpointer=self.memory)
 
     async def process_task(self, task_data: dict) -> dict:
-        """Process a task and return the solution"""
+        """Process a task using MCP LangGraph agent and return the solution"""
         task_id = task_data.get('task_id', str(uuid.uuid4()))
         timestamp = datetime.now().isoformat()
         
-        # Prepare state
-        state = TaskSolverState(
-            task_id=task_id,
-            task_name=task_data.get('task_name', ''),
-            task_description=task_data.get('task_description', ''),
-            context=task_data.get('context', ''),
-            solution=None,
-            timestamp=timestamp
-        )
+        # Extract messages and user info from task data
+        messages_data = task_data.get('messages', [])
+        user_id = task_data.get('user_id')
+        user_info = task_data.get('user_info', '')
+        
+        # Get user info if user_id provided but user_info is empty
+        if user_id and not user_info:
+            user_info = self.get_user_info(user_id)
+        
+        # Convert message dicts to LangChain message objects
+        messages = []
+        for msg_data in messages_data:
+            if msg_data.get('type') == 'human' or msg_data.get('role') == 'user':
+                messages.append(HumanMessage(content=msg_data.get('content', '')))
+            elif msg_data.get('type') == 'ai' or msg_data.get('role') == 'assistant':
+                messages.append(AIMessage(content=msg_data.get('content', '')))
+        
+        # If no messages, create a default one
+        if not messages:
+            content = task_data.get('task_description', task_data.get('content', 'Please help me with this task.'))
+            messages = [HumanMessage(content=content)]
         
         try:
-            # Run the LangGraph
-            result = await self.graph.ainvoke(state)
+            # Initialize graph if not already done
+            if not self.graph:
+                self.graph = await self.create_solver_graph()
+            
+            # Create initial state for MCP agent
+            initial_state = {
+                "messages": messages,
+                "user_info": user_info,
+                "tool_call_count": 0,
+                "max_tool_calls": self.max_tool_calls
+            }
+            
+            # Run the MCP LangGraph with session-specific config
+            config = {"configurable": {"thread_id": task_id}}
+            result = await self.graph.ainvoke(initial_state, config)
+            
+            # Extract final response
+            final_message = result["messages"][-1]
+            solution = final_message.content if hasattr(final_message, 'content') else str(final_message)
             
             # Create solution response
             solution_data = TaskSolution(
                 task_id=task_id,
-                task_name=result["task_name"],
-                task_description=result["task_description"],
-                context=result["context"],
-                solution=result["solution"],
+                messages=[{"type": "ai", "content": solution}],
+                user_info=user_info,
+                solution=solution,
                 timestamp=timestamp
             ).dict()
             
             # Send result to Kafka (format for chat interface)
             chat_response = {
-                "content": result["solution"],
-                "source": "task-solver", 
+                "content": solution,
+                "source": "mcp-task-solver", 
                 "task_id": task_id,
                 "type": "task_solution",
                 "metadata": {
-                    "task_name": result["task_name"],
-                    "task_description": result["task_description"],
-                    "context": result["context"]
+                    "user_info": user_info,
+                    "tool_calls_used": result.get("tool_call_count", 0)
                 }
             }
             self.send_result_to_kafka(chat_response)
@@ -194,7 +367,7 @@ class TaskSolverAgent:
             logger.error(f"Error processing task {task_id}: {e}")
             error_result = {
                 "task_id": task_id,
-                "task_name": task_data.get('task_name', ''),
+                "messages": messages_data,
                 "solution": f"Error: {str(e)}",
                 "timestamp": timestamp
             }
@@ -202,7 +375,7 @@ class TaskSolverAgent:
             # Send error to chat interface
             error_chat_response = {
                 "content": f"Error solving task: {str(e)}",
-                "source": "task-solver",
+                "source": "mcp-task-solver",
                 "task_id": task_id,
                 "type": "error"
             }
@@ -210,6 +383,23 @@ class TaskSolverAgent:
             
             processed_tasks[task_id] = error_result
             return error_result
+
+    def send_result_to_kafka(self, result_data: dict) -> bool:
+        """Send task result to Kafka output topic"""
+        try:
+            future = self.producer.send(KAFKA_OUTPUT_TOPIC, value=result_data)
+            record_metadata = future.get(timeout=10)
+            logger.info(f"Task result sent to Kafka topic {record_metadata.topic} partition {record_metadata.partition}")
+            return True
+        except KafkaError as e:
+            logger.error(f"Failed to send result to Kafka: {e}")
+            return False
+
+# Global state
+consumer_running = False
+producer = None
+consumer_thread = None
+processed_tasks = {}
 
 def kafka_consumer_loop():
     """Kafka consumer loop that processes tasks"""
@@ -316,9 +506,9 @@ async def solve_task_direct(task_request: TaskRequest):
     
     task_data = {
         "task_id": task_request.task_id or str(uuid.uuid4()),
-        "task_name": task_request.task_name,
-        "task_description": task_request.task_description,
-        "context": task_request.context
+        "messages": task_request.messages,
+        "user_id": task_request.user_id,
+        "user_info": task_request.user_info or ""
     }
     
     try:

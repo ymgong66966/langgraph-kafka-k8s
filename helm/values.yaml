@@ -28,23 +28,6 @@ securityContext:
   runAsNonRoot: true
   runAsUser: 1000
 
-# Agent Communication Service
-agentComms:
-  enabled: true
-  replicaCount: 2
-  image:
-    repository: langgraph-kafka/agent-comms
-    tag: "latest"
-  service:
-    type: ClusterIP
-    port: 8000
-  resources:
-    limits:
-      cpu: 500m
-      memory: 512Mi
-    requests:
-      cpu: 250m
-      memory: 256Mi
 
 # Task Generator Service  
 taskGenerator:

@@ -31,9 +31,6 @@ jobs:
           - name: task-generator
             dockerfile: docker/Dockerfile.task-generator
             context: .
-          - name: agent-comms
-            dockerfile: docker/Dockerfile.agent-comms
-            context: .
           - name: task-solver
             dockerfile: docker/Dockerfile.task-solver
             context: .
@@ -189,8 +186,6 @@ jobs:
         helm upgrade --install langgraph-kafka ./helm \
           --namespace langgraph \
           --values helm/values-dev.yaml \
-          --set agentComms.image.repository=ghcr.io/${{ github.repository }}/agent-comms \
-          --set agentComms.image.tag=main-${SHORT_SHA} \
           --set taskGenerator.image.repository=ghcr.io/${{ github.repository }}/task-generator \
           --set taskGenerator.image.tag=main-${SHORT_SHA} \
           --set taskSolver.image.repository=ghcr.io/${{ github.repository }}/task-solver \

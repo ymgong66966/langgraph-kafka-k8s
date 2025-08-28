@@ -52,9 +52,8 @@ class IncomingMessage(BaseModel):
 
 # LangGraph endpoint mapping
 LANGGRAPH_ENDPOINTS = {
-    "task-generator": "http://langgraph-system-langgraph-kafka-task-generator:8001",
-    "task-solver": "http://langgraph-system-langgraph-kafka-task-solver:8002", 
-    "agent-comms": "http://langgraph-system-langgraph-kafka-agent-comms:8000"
+    "task-generator": "http://langgraph-kafka-task-generator:8001",
+    "task-solver": "http://langgraph-kafka-task-solver:8002"
 }
 
 async def broadcast_message(message: Dict):

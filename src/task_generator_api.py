@@ -2,18 +2,20 @@ import os
 import json
 import logging
 import threading
-from typing import List, Dict, Any, Optional, TypedDict
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from typing import List, Dict, Any, Optional
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from langchain.chains import LLMChain
-from langgraph.graph import END, StateGraph, START
-from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from kafka import KafkaProducer, KafkaConsumer
 from kafka.errors import KafkaError
 from contextlib import asynccontextmanager
+
+# Import functions from task_generator.py
+from task_generator import (
+    generate_task_from_messages, 
+    generate_task_from_history,
+    TaskGenerator as TaskGen
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,41 +31,23 @@ task_results = {}
 results_consumer_running = False
 results_consumer_thread = None
 
-TASK_DECISION_PROMPT = """
-You are a task manager for a multi-agent system. You will be given a conversation history from a user.
-
-Your job is to decide whether you can directly answer the user's question or if you need to delegate the task to another agent.
-
-If you CAN directly answer (simple questions, greetings, general information):
-- Return JSON: {{"action": "direct_answer", "response": "your direct answer to the user"}}
-
-If you CANNOT directly answer (complex tasks, analysis, calculations, research):
-- Return JSON: {{"action": "delegate_task", "task_name": "short task name", "task_description": "detailed task description", "context": "useful context information"}}
-
-Input:
-Conversation History: {conversation_history}
-
-IMPORTANT: Return ONLY valid JSON without any additional text, formatting, or code blocks.
-"""
-
-class AgentState(TypedDict):
-    conversation_history: List[BaseMessage]
-    generated_task: Optional[str]
-
 class TaskRequest(BaseModel):
     conversation_history: str
+    user_id: Optional[str] = None
+    user_info: Optional[str] = None
     context: Optional[str] = None
 
 class TaskResponse(BaseModel):
-    task_name: str
-    task_description: str
-    context: str
-    status: str = "sent_to_kafka"
+    agent_used: str
+    response: Optional[str] = None
+    task_id: Optional[str] = None
+    kafka_sent: bool
+    status: str = "processed"
 
 # Global producer instance
 producer = None
 
-class TaskGenerator:
+class TaskGeneratorAPI:
     def __init__(self):
         global producer
         if producer is None:
@@ -146,81 +130,63 @@ def kafka_results_consumer_loop():
         results_consumer_running = False
         consumer.close()
 
-async def task_generator_node(state: AgentState) -> dict:
-    """Generate tasks from conversation history"""
-    conversation_history = state.get('conversation_history', '')
+def convert_conversation_to_messages(conversation_history: str) -> List[BaseMessage]:
+    """Convert conversation history string to LangChain messages"""
+    messages = []
     
-    if not OPENAI_API_KEY:
-        logger.error("OpenAI API key not configured")
-        return {"generated_task": "Error: OpenAI API key not configured"}
+    # Simple parsing - split by lines and detect User/Assistant patterns
+    lines = conversation_history.strip().split('\n')
+    current_content = ""
+    current_role = None
     
-    llm = ChatOpenAI(
-        temperature=0.7,
-        api_key=OPENAI_API_KEY,
-        model="gpt-4o-mini"
-    )
-    
-    prompt = PromptTemplate(
-        template=TASK_DECISION_PROMPT,
-        input_variables=["conversation_history"]
-    )
-    
-    chain = LLMChain(llm=llm, prompt=prompt)
-    
-    try:
-        # Generate decision
-        response = await chain.arun(conversation_history=conversation_history)
-        logger.info(f"Generated decision: {response}")
-        
-        # Parse JSON response
-        decision_data = json.loads(response.strip())
-        
-        if decision_data.get("action") == "direct_answer":
-            # Direct answer - send to chat immediately
-            logger.info("Providing direct answer to user")
-            return {"generated_task": response, "decision_data": decision_data, "action": "direct_answer"}
-        
-        elif decision_data.get("action") == "delegate_task":
-            # Task delegation - validate required fields
-            required_fields = ["task_name", "task_description", "context"]
-            if not all(field in decision_data for field in required_fields):
-                raise ValueError(f"Missing required fields for task delegation. Expected: {required_fields}")
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
             
-            logger.info("Delegating task to task solver")
-            return {"generated_task": response, "decision_data": decision_data, "action": "delegate_task"}
-        
+        if line.startswith("User:"):
+            # Save previous message if exists
+            if current_role and current_content:
+                if current_role == "user":
+                    messages.append(HumanMessage(content=current_content.strip()))
+                elif current_role == "assistant":
+                    messages.append(AIMessage(content=current_content.strip()))
+            
+            # Start new user message
+            current_role = "user"
+            current_content = line[5:].strip()  # Remove "User:" prefix
+            
+        elif line.startswith("Assistant:"):
+            # Save previous message if exists
+            if current_role and current_content:
+                if current_role == "user":
+                    messages.append(HumanMessage(content=current_content.strip()))
+                elif current_role == "assistant":
+                    messages.append(AIMessage(content=current_content.strip()))
+            
+            # Start new assistant message
+            current_role = "assistant"
+            current_content = line[10:].strip()  # Remove "Assistant:" prefix
+            
         else:
-            raise ValueError(f"Unknown action: {decision_data.get('action')}")
-            
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON response: {e}")
-        return {"generated_task": f"Error: Invalid JSON response - {str(e)}"}
-    except Exception as e:
-        logger.error(f"Task generation error: {e}")
-        return {"generated_task": f"Error: {str(e)}"}
-
-def create_task_generator_graph() -> StateGraph:
-    """Create and return the task generator graph"""
-    workflow = StateGraph(AgentState)
+            # Continue current message
+            if current_content:
+                current_content += " " + line
+            else:
+                current_content = line
     
-    # Add nodes
-    workflow.add_node("task_generator", task_generator_node)
+    # Add final message
+    if current_role and current_content:
+        if current_role == "user":
+            messages.append(HumanMessage(content=current_content.strip()))
+        elif current_role == "assistant":
+            messages.append(AIMessage(content=current_content.strip()))
     
-    # Add edges
-    workflow.add_edge(START, "task_generator")
-    workflow.add_edge("task_generator", END)
+    # If no structured conversation found, treat entire input as user message
+    if not messages and conversation_history.strip():
+        messages.append(HumanMessage(content=conversation_history.strip()))
     
-    # Add checkpointer for state persistence (disabled in dev)
-    disable_checkpointer = os.getenv('DISABLECHECKPOINTER', 'false').lower() == 'true'
-    if disable_checkpointer:
-        logger.info("Checkpointer disabled via environment variable")
-        return workflow.compile()
-    else:
-        checkpointer = MemorySaver()
-        return workflow.compile(checkpointer=checkpointer)
-
-# Create the graph instance
-graph = create_task_generator_graph()
+    return messages
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -258,8 +224,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="LangGraph Task Generator API",
-    description="Generate tasks from conversation history and send to Kafka",
-    version="1.0.0",
+    description="Generate tasks from conversation history using task_generator.py",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -268,113 +234,58 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "service": "task-generator",
+        "service": "task-generator-api",
         "results_consumer_running": results_consumer_running,
         "kafka_servers": KAFKA_BOOTSTRAP_SERVERS,
         "input_topic": KAFKA_TOPIC,
         "results_topic": KAFKA_RESULTS_TOPIC,
         "openai_configured": bool(OPENAI_API_KEY),
-        "task_results_count": len(task_results)
+        "task_results_count": len(task_results),
+        "using_task_generator_module": True
     }
 
 @app.post("/generate-task")
-async def generate_task(request: TaskRequest, background_tasks: BackgroundTasks):
-    """Generate a task from conversation history and send to Kafka"""
+async def generate_task(request: TaskRequest):
+    """Generate a task from conversation history using task_generator.py"""
     try:
-        # Generate task using LangGraph
-        # Use config only if checkpointer is enabled
-        disable_checkpointer = os.getenv('DISABLECHECKPOINTER', 'false').lower() == 'true'
-        if disable_checkpointer:
-            result = await graph.ainvoke({
-                "conversation_history": request.conversation_history,
-                "generated_task": None
-            })
-        else:
-            result = await graph.ainvoke({
-                "conversation_history": request.conversation_history,
-                "generated_task": None
-            }, config={"configurable": {"thread_id": f"task-gen-{hash(request.conversation_history) % 10000}"}})
+        # Convert conversation history to messages
+        messages = convert_conversation_to_messages(request.conversation_history)
         
-        if "Error:" in result.get("generated_task", ""):
-            raise HTTPException(status_code=500, detail=result["generated_task"])
+        logger.info(f"Processing request with {len(messages)} messages")
+        logger.info(f"User ID: {request.user_id}")
         
-        # Parse the generated_task JSON to get action and decision data
-        logger.info(f"llm response for logging: {result}")
-        generated_task_json = result.get("generated_task", "")
-        logger.info(f"Generated decision data for logging: {generated_task_json}")
-        if not generated_task_json:
-            raise HTTPException(status_code=500, detail="No generated task found")
+        # Use the function from task_generator.py
+        result = await generate_task_from_messages(
+            messages=messages,
+            user_id=request.user_id,
+            user_info=request.user_info,
+            mock=False  # Set to False for production use
+        )
         
-        try:
-            decision_data = json.loads(generated_task_json)
-            action = decision_data.get("action")
-            logger.info(f"Parsed decision: action={action}, decision_data={decision_data}")
-        except json.JSONDecodeError as e:
-            raise HTTPException(status_code=500, detail=f"Invalid generated task JSON: {e}")
+        logger.info(f"Task generator result: {result}")
         
-        if not action:
-            raise HTTPException(status_code=500, detail=f"No action found in decision data: {decision_data}")
+        # Extract processed data
+        processed_data = result.get("processed_data", {})
         
-        task_gen = TaskGenerator()
+        if "error" in processed_data:
+            raise HTTPException(status_code=500, detail=processed_data["error"])
         
-        if action == "direct_answer":
-            # Send direct response to chat interface
-            response_data = {
-                "content": decision_data["response"],
-                "source": "task-generator",
-                "task_id": f"direct-{hash(request.conversation_history) % 10000}",
-                "type": "direct_answer"
-            }
-            
-            def send_response_bg():
-                try:
-                    logger.info(f"Background task: Attempting to send response: {response_data}")
-                    logger.info(f"Using KAFKA_RESULTS_TOPIC: {KAFKA_RESULTS_TOPIC}")
-                    success = task_gen.send_response_to_chat(response_data)
-                    if not success:
-                        logger.error("Failed to send direct response to chat")
-                    else:
-                        logger.info("Successfully sent direct response to chat via Kafka")
-                except Exception as e:
-                    logger.error(f"Background task exception: {e}")
-                    raise
-            
-            background_tasks.add_task(send_response_bg)
-            
-            return {"status": "direct_answer", "response": decision_data["response"]}
-            
-        elif action == "delegate_task":
-            # Send task to task solver via Kafka
-            task_data = {
-                "task_name": decision_data["task_name"],
-                "task_description": decision_data["task_description"],
-                "context": decision_data["context"],
-                "task_id": f"task-{hash(request.conversation_history) % 10000}",
-                "source": "task-generator"
-            }
-            
-            def send_to_kafka_bg():
-                success = task_gen.send_to_kafka(task_data)
-                if not success:
-                    logger.error("Background task failed to send to Kafka")
-            
-            background_tasks.add_task(send_to_kafka_bg)
-            
-            return TaskResponse(**{
-                "task_name": decision_data["task_name"],
-                "task_description": decision_data["task_description"], 
-                "context": decision_data["context"]
-            })
+        # Create response based on the result
+        agent_used = processed_data.get("agent_used", "unknown")
+        response_content = processed_data.get("response", "")
+        task_id = processed_data.get("task_id", "")
+        kafka_sent = processed_data.get("kafka_sent", False)
         
-        else:
-            raise HTTPException(status_code=500, detail=f"Unknown action: {action}")
+        return TaskResponse(
+            agent_used=agent_used,
+            response=response_content,
+            task_id=task_id,
+            kafka_sent=kafka_sent,
+            status="processed"
+        )
         
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="Failed to parse generated task")
     except Exception as e:
         logger.error(f"Task generation error: {e}")
-        logger.error(f"Error type: {type(e)}")
-        logger.error(f"Error args: {e.args}")
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -383,14 +294,7 @@ async def generate_task(request: TaskRequest, background_tasks: BackgroundTasks)
 async def send_task_directly(task_data: dict):
     """Send task data directly to Kafka (for testing)"""
     try:
-        required_fields = ["task_name", "task_description", "context"]
-        if not all(field in task_data for field in required_fields):
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Missing required fields: {required_fields}"
-            )
-        
-        task_gen = TaskGenerator()
+        task_gen = TaskGeneratorAPI()
         success = task_gen.send_to_kafka(task_data)
         
         if success:
@@ -402,21 +306,21 @@ async def send_task_directly(task_data: dict):
         logger.error(f"Error sending task to Kafka: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/task-result/{task_id}")
-async def get_task_result(task_id: str):
-    """Get the result of a specific task"""
-    if task_id in task_results:
-        return task_results[task_id]
-    else:
-        raise HTTPException(status_code=404, detail="Task result not found")
+# @app.get("/task-result/{task_id}")
+# async def get_task_result(task_id: str):
+#     """Get the result of a specific task"""
+#     if task_id in task_results:
+#         return task_results[task_id]
+#     else:
+#         raise HTTPException(status_code=404, detail="Task result not found")
 
-@app.get("/task-results")
-async def list_task_results():
-    """List all task results"""
-    return {
-        "total_results": len(task_results),
-        "results": list(task_results.values())
-    }
+# @app.get("/task-results")
+# async def list_task_results():
+#     """List all task results"""
+#     return {
+#         "total_results": len(task_results),
+#         "results": list(task_results.values())
+#     }
 
 @app.get("/")
 async def root():
@@ -424,12 +328,13 @@ async def root():
     return {
         "service": "LangGraph Task Generator API",
         "status": "running",
-        "version": "1.0.0",
+        "version": "2.0.0",
+        "using_module": "task_generator.py",
         "endpoints": {
             "/generate-task": "POST - Generate task from conversation history",
-            "/send-task-to-kafka": "POST - Send task directly to Kafka",
+            # "/send-task-to-kafka": "POST - Send task directly to Kafka",
             "/task-result/{task_id}": "GET - Get result of specific task",
-            "/task-results": "GET - List all task results",
+            # "/task-results": "GET - List all task results",
             "/health": "GET - Health check"
         }
     }
