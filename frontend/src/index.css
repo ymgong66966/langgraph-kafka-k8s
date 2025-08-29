@@ -45,6 +45,28 @@ body {
   gap: 1rem;
 }
 
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255,255,255,0.1);
+  padding: 0.4rem 0.8rem;
+  border-radius: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.user-label {
+  font-weight: 500;
+}
+
+.user-id {
+  font-family: monospace;
+  background: rgba(255,255,255,0.2);
+  padding: 0.2rem 0.4rem;
+  border-radius: 0.3rem;
+  font-size: 0.8rem;
+}
+
 .endpoint-selector {
   padding: 0.5rem;
   border: none;

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,12 +36,14 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')  # For health checks
 
 # In-memory storage for messages and SSE clients
 messages: List[Dict] = []
-sse_clients: List[asyncio.Queue] = []
+# Changed to dict to track user_id per client: {client_queue: user_id}
+sse_clients: Dict[asyncio.Queue, str] = {}
 kafka_consumer_running = False
 
 class ChatMessage(BaseModel):
     content: str
     target_endpoint: Optional[str] = "task-generator"
+    user_id: Optional[str] = None
 
 class IncomingMessage(BaseModel):
     content: str
@@ -49,6 +51,7 @@ class IncomingMessage(BaseModel):
     message_type: str = "agent"
     conversation_id: Optional[str] = None
     metadata: Optional[Dict] = None
+    user_id: Optional[str] = None
 
 # LangGraph endpoint mapping
 LANGGRAPH_ENDPOINTS = {
@@ -57,8 +60,9 @@ LANGGRAPH_ENDPOINTS = {
 }
 
 async def broadcast_message(message: Dict):
-    """Broadcast message to all SSE clients"""
+    """Broadcast message to SSE clients, filtered by user_id"""
     message_json = json.dumps(message)
+    message_user_id = message.get('user_id')
     
     # Add to message history
     messages.append(message)
@@ -67,19 +71,27 @@ async def broadcast_message(message: Dict):
     if len(messages) > 100:
         messages.pop(0)
     
-    # Send to all connected SSE clients
+    # Send to connected SSE clients, filtered by user_id
     disconnected_clients = []
-    for client_queue in sse_clients:
+    sent_count = 0
+    for client_queue, client_user_id in sse_clients.items():
         try:
-            await client_queue.put(message_json)
+            # Only send message if:
+            # 1. Message has no user_id (system messages), OR
+            # 2. Client has no user_id (receives all), OR  
+            # 3. Message user_id matches client user_id
+            if not message_user_id or not client_user_id or message_user_id == client_user_id:
+                await client_queue.put(message_json)
+                sent_count += 1
         except:
             disconnected_clients.append(client_queue)
     
     # Remove disconnected clients
     for client in disconnected_clients:
-        sse_clients.remove(client)
+        if client in sse_clients:
+            del sse_clients[client]
     
-    logger.info(f"Broadcasted message to {len(sse_clients)} clients")
+    logger.info(f"Broadcasted message to {sent_count}/{len(sse_clients)} clients (filtered by user_id: {message_user_id})")
 
 def kafka_response_consumer():
     """Background thread to consume messages from Kafka response topic"""
@@ -137,34 +149,26 @@ def kafka_response_consumer():
                     "content": kafka_message.get("content", kafka_message.get("result", str(kafka_message))),
                     "timestamp": datetime.now().isoformat(),
                     "source": kafka_message.get("source", "agent"),
-                    "metadata": kafka_message.get("metadata", {})
+                    "metadata": kafka_message.get("metadata", {}),
+                    "user_id": kafka_message.get("user_id")  # Extract user_id from Kafka message
                 }
                 
-                # Add to message history and broadcast
-                messages.append(chat_message)
-                if len(messages) > 100:
-                    messages.pop(0)
-                
-                # Broadcast to all SSE clients (need to use asyncio from thread)
+                # Use the broadcast_message function with asyncio from thread
                 import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
                 
-                message_json = json.dumps(chat_message)
-                disconnected_clients = []
-                for client_queue in sse_clients:
-                    try:
-                        # Put message in queue (synchronous)
-                        client_queue._queue.appendleft(message_json)
-                    except:
-                        disconnected_clients.append(client_queue)
+                # Check if event loop exists, if not create one  
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_closed():
+                        raise RuntimeError("Event loop is closed")
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
                 
-                # Clean up disconnected clients
-                for client in disconnected_clients:
-                    if client in sse_clients:
-                        sse_clients.remove(client)
+                # Run broadcast_message in the event loop
+                loop.run_until_complete(broadcast_message(chat_message))
                 
-                logger.info(f"Broadcasted Kafka message to {len(sse_clients)} clients")
+                logger.info(f"Broadcasted Kafka message: {chat_message.get('user_id', 'no-user-id')}")
                         
             except Exception as e:
                 logger.error(f"Error processing Kafka message: {e}")
@@ -209,7 +213,8 @@ async def send_message(message: ChatMessage):
         "content": message.content,
         "timestamp": datetime.now().isoformat(),
         "source": "user",
-        "target_endpoint": message.target_endpoint
+        "target_endpoint": message.target_endpoint,
+        "user_id": message.user_id
     }
     
     # Broadcast user message immediately
@@ -223,7 +228,8 @@ async def send_message(message: ChatMessage):
             # Send to task generator with conversation history format
             payload = {
                 "conversation_history": message.content,
-                "message_id": user_message["id"]
+                "message_id": user_message["id"],
+                "user_id": message.user_id
             }
             
             logger.info(f"Sending message to task generator: {payload}")
@@ -264,7 +270,8 @@ async def receive_incoming_message(message: IncomingMessage):
         "timestamp": datetime.now().isoformat(),
         "source": message.source,
         "conversation_id": message.conversation_id,
-        "metadata": message.metadata or {}
+        "metadata": message.metadata or {},
+        "user_id": message.user_id
     }
     
     # Broadcast to all chat clients
@@ -275,12 +282,17 @@ async def receive_incoming_message(message: IncomingMessage):
     return {"status": "message_received", "message_id": incoming_message["id"]}
 
 @app.get("/chat/history")
-async def get_chat_history():
-    """Get recent chat history"""
-    return {"messages": messages[-50:]}  # Last 50 messages
+async def get_chat_history(user_id: Optional[str] = Query(None)):
+    """Get recent chat history, optionally filtered by user_id"""
+    if user_id:
+        # Filter messages for specific user
+        user_messages = [msg for msg in messages if msg.get('user_id') == user_id]
+        return {"messages": user_messages[-50:]}  # Last 50 messages for this user
+    else:
+        return {"messages": messages[-50:]}  # Last 50 messages (all users)
 
 @app.get("/chat/stream")
-async def chat_stream():
+async def chat_stream(user_id: Optional[str] = Query(None)):
     """SSE endpoint for real-time chat updates (fed by Kafka response topic)"""
     
     # Start Kafka consumer if not already running
@@ -289,12 +301,20 @@ async def chat_stream():
     async def event_generator():
         # Create a queue for this client
         client_queue = asyncio.Queue()
-        sse_clients.append(client_queue)
+        sse_clients[client_queue] = user_id  # Track user_id for this client
         
         try:
-            # Send recent messages to new client
-            for message in messages[-10:]:  # Last 10 messages
-                yield f"data: {json.dumps(message)}\n\n"
+            # Send recent messages to new client, filtered by user_id
+            recent_messages = messages[-50:]  # Get more recent messages to filter from
+            if user_id:
+                # Filter messages for this specific user
+                user_recent_messages = [msg for msg in recent_messages if msg.get('user_id') == user_id][-10:]
+                for message in user_recent_messages:
+                    yield f"data: {json.dumps(message)}\n\n"
+            else:
+                # Send all recent messages if no user_id specified
+                for message in recent_messages[-10:]:
+                    yield f"data: {json.dumps(message)}\n\n"
             
             # Send new messages as they arrive (from Kafka or direct broadcast)
             while True:
@@ -311,7 +331,7 @@ async def chat_stream():
         finally:
             # Clean up
             if client_queue in sse_clients:
-                sse_clients.remove(client_queue)
+                del sse_clients[client_queue]
     
     return StreamingResponse(
         event_generator(),

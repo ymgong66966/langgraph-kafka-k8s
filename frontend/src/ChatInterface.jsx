@@ -6,13 +6,40 @@ const ChatInterface = () => {
   const [targetEndpoint, setTargetEndpoint] = useState('task-generator')
   const [isConnected, setIsConnected] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [userId, setUserId] = useState(null)
   const messagesEndRef = useRef(null)
   const eventSourceRef = useRef(null)
 
+  // Extract user_id from URL parameters or generate a session ID
   useEffect(() => {
-    // Connect to SSE stream
+    const urlParams = new URLSearchParams(window.location.search)
+    let userIdFromUrl = urlParams.get('user_id')
+    
+    if (!userIdFromUrl) {
+      // Check localStorage for existing user_id
+      userIdFromUrl = localStorage.getItem('chat_user_id')
+    }
+    
+    if (!userIdFromUrl) {
+      // Generate a new session ID if none provided
+      userIdFromUrl = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      localStorage.setItem('chat_user_id', userIdFromUrl)
+    } else {
+      // Store user_id in localStorage for persistence
+      localStorage.setItem('chat_user_id', userIdFromUrl)
+    }
+    
+    setUserId(userIdFromUrl)
+    console.log('User ID initialized:', userIdFromUrl)
+  }, [])
+
+  useEffect(() => {
+    // Don't connect SSE until we have userId
+    if (!userId) return
+
+    // Connect to SSE stream with user_id parameter
     const connectSSE = () => {
-      const eventSource = new EventSource('/chat/stream')
+      const eventSource = new EventSource(`/chat/stream?user_id=${encodeURIComponent(userId)}`)
       eventSourceRef.current = eventSource
 
       eventSource.onopen = () => {
@@ -52,8 +79,8 @@ const ChatInterface = () => {
 
     connectSSE()
 
-    // Load chat history
-    fetch('/chat/history')
+    // Load chat history for this user
+    fetch(`/chat/history?user_id=${encodeURIComponent(userId)}`)
       .then(res => res.json())
       .then(data => setMessages(data.messages || []))
       .catch(console.error)
@@ -64,7 +91,7 @@ const ChatInterface = () => {
         eventSourceRef.current.close()
       }
     }
-  }, [])
+  }, [userId])
 
   useEffect(() => {
     // Scroll to bottom when new messages arrive
@@ -72,7 +99,7 @@ const ChatInterface = () => {
   }, [messages])
 
   const sendMessage = async () => {
-    if (!inputValue.trim() || isLoading) return
+    if (!inputValue.trim() || isLoading || !userId) return
 
     setIsLoading(true)
     
@@ -84,7 +111,8 @@ const ChatInterface = () => {
         },
         body: JSON.stringify({
           content: inputValue,
-          target_endpoint: targetEndpoint
+          target_endpoint: targetEndpoint,
+          user_id: userId
         })
       })
 
@@ -131,14 +159,17 @@ const ChatInterface = () => {
       <div className="chat-header">
         <h1>🦜 LangGraph Chat</h1>
         <div className="header-controls">
+          <div className="user-info">
+            <span className="user-label">👤 User:</span>
+            <span className="user-id">{userId || 'Loading...'}</span>
+          </div>
           <select 
             value={targetEndpoint} 
             onChange={(e) => setTargetEndpoint(e.target.value)}
             className="endpoint-selector"
           >
-            <option value="task-generator">📝 Task Generator</option>
-            <option value="task-solver">🔧 Task Solver</option>
-            <option value="agent-comms">💬 Agent Comms</option>
+            <option value="task-generator">📝 Task Generator (Smart Router)</option>
+            <option value="task-solver">🔧 Task Solver (Direct)</option>
           </select>
           <div className={`connection-status ${isConnected ? 'connected' : 'disconnected'}`}>
             {isConnected ? '🟢 Connected' : '🔴 Disconnected'}

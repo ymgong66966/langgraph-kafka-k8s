@@ -75,7 +75,7 @@ You are a compassionate and professional frontend assistant specializing in care
 4. **Support**: Offer emotional validation and encouragement
 5. **Guide**: If they need specific recommendations or research, gently suggest they might benefit from more specialized assistance
 
-Respond in a warm, caring manner that makes the caregiver feel heard, supported, and understood. Keep your response conversational and focused on their emotional well-being while gathering information about their needs.
+Respond in a warm, caring manner that makes the caregiver feel heard, supported, and understood. Keep your response conversational and focused on their emotional well-being while gathering information about their needs. Most importantly, you need to talk like a human and not like a robot. Keep your response short and to the point, make sure your response is not more than 5 sentences. Try to ask meaningful and open-ended questions to better understand their needs. Try to ask questions to keep them engaged. Try to make friends with them. Remember, you are talking to caregivers. You have to ask questions they may be interested in answering and keep the conversation going. Try to make the conversation engaging and interesting. Try to make the conversation fun and enjoyable.
 """
 
 class AgentState(TypedDict):
@@ -125,27 +125,27 @@ class TaskGenerator:
 
     def get_user_info(self, user_id: str) -> str:
         """Retrieve user information from API"""
-        # try:
-        #     url = "https://h9d1ldlv65.execute-api.us-east-2.amazonaws.com/dev/getuser-mcp"
-        #     headers = {
-        #         "x-api-key": "iwja4JC4q765W7VlfqBVx2RAYSISs9lPwEyqNvfh",
-        #         "Content-Type": "application/json"
-        #     }
-        #     payload = {"userId": user_id}
+        try:
+            url = "https://h9d1ldlv65.execute-api.us-east-2.amazonaws.com/dev/getuser-mcp"
+            headers = {
+                "x-api-key": "iwja4JC4q765W7VlfqBVx2RAYSISs9lPwEyqNvfh",
+                "Content-Type": "application/json"
+            }
+            payload = {"userId": user_id}
             
-        #     response = requests.post(url, headers=headers, data=json.dumps(payload))
+            response = requests.post(url, headers=headers, data=json.dumps(payload))
             
-        #     if response.status_code == 200:
-        #         user_data = response.json()
-        #         return json.dumps(user_data)
-        #     else:
-        #         logger.warning(f"Failed to get user info for {user_id}: {response.status_code}")
-        #         return f"User ID: {user_id}"
+            if response.status_code == 200:
+                user_data = response.json()
+                return json.dumps(user_data)
+            else:
+                logger.warning(f"Failed to get user info for {user_id}: {response.status_code}")
+                return f"User ID: {user_id}"
                 
-        # except Exception as e:
-        #     logger.error(f"Error retrieving user info: {e}")
-        #     return f"User ID: {user_id}"
-        return f"User info: address: Noca Lofts, Lansing, MI. I'm taking care of my mom who is 75 years old. She has Alzheimer's disease. She is diabetic and has high blood pressure. I need help with her care."
+        except Exception as e:
+            logger.error(f"Error retrieving user info: {e}")
+            return f"User ID: {user_id}"
+        # return f"User info: address: Noca Lofts, Lansing, MI. I'm taking care of my mom who is 75 years old. She has Alzheimer's disease. She is diabetic and has high blood pressure. I need help with her care."
 
 async def task_generator_node(state: AgentState) -> dict:
     """Process messages and prepare data for task solver"""
@@ -313,6 +313,7 @@ async def frontend_agent_node(state: AgentState) -> dict:
             "source": "frontend-agent",
             "task_id": task_id,
             "type": "frontend_response",
+            "user_id": user_id,  # Include user_id for proper message filtering
             "metadata": {
                 "user_info": user_info,
                 "agent_type": "frontend"

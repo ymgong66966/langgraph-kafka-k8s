@@ -335,7 +335,7 @@ Provide a detailed, helpful response that addresses the user's needs. If you use
             }
             
             # Run the MCP LangGraph with session-specific config
-            config = {"configurable": {"thread_id": task_id}}
+            config = {"configurable": {"thread_id": user_id}}
             result = await self.graph.ainvoke(initial_state, config)
             
             # Extract final response
@@ -357,6 +357,7 @@ Provide a detailed, helpful response that addresses the user's needs. If you use
                 "source": "mcp-task-solver", 
                 "task_id": task_id,
                 "type": "task_solution",
+                "user_id": user_id,  # Include user_id for proper message filtering
                 "metadata": {
                     "user_info": user_info,
                     "tool_calls_used": result.get("tool_call_count", 0)
@@ -383,7 +384,8 @@ Provide a detailed, helpful response that addresses the user's needs. If you use
                 "content": f"Error solving task: {str(e)}",
                 "source": "mcp-task-solver",
                 "task_id": task_id,
-                "type": "error"
+                "type": "error",
+                "user_id": user_id  # Include user_id for proper message filtering
             }
             self.send_result_to_kafka(error_chat_response)
             
