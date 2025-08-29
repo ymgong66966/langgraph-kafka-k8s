@@ -12,6 +12,7 @@ data:
   KAFKA_RESULTS_TOPIC: {{ .Values.env.kafkaResultsTopic | quote }}
   KAFKA_RESPONSE_TOPIC: {{ .Values.env.kafkaResultsTopic | quote }}
   LANGGRAPH_API_URL: {{ .Values.env.langgraphApiUrl | quote }}
-  # LangSmith Tracing Configuration
+  # LangSmith Tracing Configuration  
   LANGCHAIN_TRACING: {{ .Values.env.langchainTracing | quote }}
+  LANGCHAIN_TRACING_V2: {{ .Values.env.langchainTracing | quote }}
   LANGCHAIN_ENDPOINT: {{ .Values.env.langchainEndpoint | quote }}
