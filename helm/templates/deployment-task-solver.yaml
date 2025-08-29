@@ -48,6 +48,20 @@ spec:
                 secretKeyRef:
                   name: {{ include "langgraph-kafka.fullname" . }}-secrets
                   key: openai-api-key
+            {{- if .Values.env.langchainApiKey }}
+            - name: LANGCHAIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "langgraph-kafka.fullname" . }}-secrets
+                  key: langchain-api-key
+            {{- end }}
+            {{- if .Values.env.langsmithApiKey }}
+            - name: LANGSMITH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "langgraph-kafka.fullname" . }}-secrets
+                  key: langsmith-api-key
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
