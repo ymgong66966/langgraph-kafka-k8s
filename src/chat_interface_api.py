@@ -228,7 +228,6 @@ async def send_message(message: ChatMessage):
             # Send to task generator with conversation history format
             payload = {
                 "conversation_history": message.content,
-                "message_id": user_message["id"],
                 "user_id": message.user_id
             }
             

@@ -96,26 +96,47 @@ class TaskSolverAgent:
         
     def get_user_info(self, user_id: str) -> str:
         """Retrieve user information from API"""
+        import requests
+        import json
+
+        url = "https://h9d1ldlv65.execute-api.us-east-2.amazonaws.com/dev/getuser-mcp"
+
+        payload = {"user_Id": user_id}
+        headers1 = {
+            "x-api-key": "iwja4JC4q765W7VlfqBVx2RAYSISs9lPwEyqNvfh",
+            "Content-Type": "application/json"
+        }
+
         try:
-            url = "https://h9d1ldlv65.execute-api.us-east-2.amazonaws.com/dev/getuser-mcp"
-            headers = {
+            response1 = requests.post(url, headers=headers1, data=json.dumps(payload))
+            user_info_json = json.loads(response1.text)
+            care_recipients = user_info_json["careRecipients"]
+            user_info_filtered = {}
+            for item, value in user_info_json.items():
+                if item != "careRecipients" and item != "user_Id":
+                    user_info_filtered[item] = value
+            care_recipients_ids = []
+            for care_recipient in care_recipients:
+                care_recipients_ids.append((care_recipient["recipient_Id"], care_recipient["relationship"]))
+            user_info_final = "User themselves information: " + json.dumps(user_info_filtered) + "\n\nUser's Care Recipients information: "
+
+        except Exception as e:
+            print(f"Error: {e}")
+            return "user is a caregiver"
+        for care_recipient_id, relationship in care_recipients_ids:
+            payload2 = {"recipient_Id": care_recipient_id}
+            url2 = "https://h9d1ldlv65.execute-api.us-east-2.amazonaws.com/dev/getrecipient-mcp"
+            headers2 = {
                 "x-api-key": "iwja4JC4q765W7VlfqBVx2RAYSISs9lPwEyqNvfh",
                 "Content-Type": "application/json"
             }
-            payload = {"userId": user_id}
-            
-            response = requests.post(url, headers=headers, data=json.dumps(payload))
-            
-            if response.status_code == 200:
-                user_data = response.json()
-                return json.dumps(user_data)
-            else:
-                logger.warning(f"Failed to get user info for {user_id}: {response.status_code}")
-                return f"User ID: {user_id}"
-                
-        except Exception as e:
-            logger.error(f"Error retrieving user info: {e}")
-            return f"User ID: {user_id}"
+            try:
+                response2 = requests.post(url2, headers=headers2, data=json.dumps(payload2))
+                user_info_final += "\nRelationship with the user: " + relationship + "\n" + response2.text
+            except Exception as e:
+                print(f"Error: {e}")
+                return "user is a caregiver"
+        return user_info_final
     
     def sanitize_tool_name(self, name: str) -> str:
         """Sanitize tool name to match OpenAI pattern ^[a-zA-Z0-9_-]+$"""
