@@ -78,6 +78,35 @@ You are a compassionate and professional frontend assistant specializing in care
 Respond in a warm, caring manner that makes the caregiver feel heard, supported, and understood. Keep your response conversational and focused on their emotional well-being while gathering information about their needs. Most importantly, you need to talk like a human and not like a robot. Keep your response short and to the point, make sure your response is not more than 5 sentences. Try to ask meaningful and open-ended questions to better understand their needs. Try to ask questions to keep them engaged. Try to make friends with them. Remember, you are talking to caregivers. You have to ask questions they may be interested in answering and keep the conversation going. Try to make the conversation engaging and interesting. Try to make the conversation fun and enjoyable.
 """
 
+TASK_DELEGATION_PROMPT = """
+You are a friendly caregiver assistant who has just delegated the user's request to a specialized task solver. Your job is to:
+
+1. **Acknowledge the delegation**: Let them know you've passed their request to a specialist who will provide detailed help
+2. **Keep the conversation going**: Ask related questions or continue the natural flow of conversation
+3. **Be conversational and friendly**: Talk like a caring friend, not a robot
+4. **Show genuine interest**: Ask follow-up questions that show you care about their situation
+
+## Context:
+**Chat History**: {chat_history}
+**User Information**: {user_info}
+**Router Decision**: The system decided to delegate this to the task solver because it requires detailed research/recommendations
+
+## Your Response Guidelines:
+- Keep it short (2-3 sentences max)
+- Acknowledge that you're getting them specialized help
+- Ask a related question to keep them engaged
+- Be warm and conversational
+- If they were being casual/chatty, match that tone
+- If they seem stressed, be supportive
+
+## Examples:
+- "I've sent your request to our {{research specialist agent}} who'll find you some great options! You should hear from {{the corresponding agent}} soon. While they're working on that, {{ask a follow-up question to get more information about their needs}}"
+- "Getting you connected with {{an agent who can dig into the best services in your area}}! You should hear from {{the corresponding agent}} soon. In the meantime, how is {{care recipient}} doing recently? Has {{the condition}} been better?"
+- "I've passed this along to get you some detailed recommendations! you should expect a reponse back from {{research specialist agent}} soon. How are you feeling about everything else going on? Did {{this difficulty}} make your life more stressful? How are you feeling?"
+
+Respond naturally and keep the conversation flowing while they wait for detailed help.
+"""
+
 class AgentState(TypedDict):
     messages: List[BaseMessage]
     user_id: Optional[str]
@@ -214,6 +243,75 @@ async def task_generator_node(state: AgentState) -> dict:
         
         if success:
             logger.info("Task successfully sent to Kafka")
+            
+            # NEW: Generate conversational response after delegation
+            if not state.get('mock', False) and OPENAI_API_KEY:
+                # Convert messages to chat history string
+                chat_history = ""
+                for msg in messages:
+                    if isinstance(msg, HumanMessage):
+                        chat_history += f"User: {msg.content}\n"
+                    elif isinstance(msg, AIMessage):
+                        chat_history += f"Assistant: {msg.content}\n"
+                
+                # Use GPT-4o for delegation response
+                llm = ChatOpenAI(
+                    temperature=0.3,
+                    api_key=OPENAI_API_KEY,
+                    model="gpt-4o"
+                )
+                
+                prompt = PromptTemplate.from_template(TASK_DELEGATION_PROMPT)
+                chain = prompt | llm
+                
+                try:
+                    # Generate delegation acknowledgment response
+                    response = await chain.ainvoke({
+                        "chat_history": chat_history,
+                        "user_info": user_info
+                    })
+                    
+                    logger.info(f"Delegation response generated: {response.content[:100]}...")
+                    
+                    # Generate task_id for this delegation response
+                    delegation_task_id = str(uuid.uuid4())
+                    
+                    # Format response for chat interface (send to results topic)
+                    delegation_response = {
+                        "content": response.content,
+                        "source": "task-generator-delegation",
+                        "task_id": delegation_task_id,
+                        "type": "delegation_response",
+                        "user_id": user_id,
+                        "metadata": {
+                            "user_info": user_info,
+                            "original_task_delegated": True,
+                            "agent_type": "task_generator"
+                        }
+                    }
+                    
+                    # Send delegation response to Kafka results topic
+                    delegation_success = task_gen.send_result_to_kafka(delegation_response)
+                    
+                    if delegation_success:
+                        logger.info("Delegation response sent to Kafka results topic")
+                    else:
+                        logger.error("Failed to send delegation response to Kafka")
+                    
+                    return {
+                        "processed_data": {
+                            **task_data,
+                            "delegation_response": response.content,
+                            "delegation_task_id": delegation_task_id,
+                            "delegation_sent": delegation_success
+                        }
+                    }
+                    
+                except Exception as e:
+                    logger.error(f"Error generating delegation response: {e}")
+                    # Still return success for the main task delegation
+                    return {"processed_data": task_data}
+            
             return {"processed_data": task_data}
         else:
             logger.error("Failed to send task to Kafka")
