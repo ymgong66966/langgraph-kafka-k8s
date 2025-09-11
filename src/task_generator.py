@@ -36,11 +36,15 @@ Here are the agent names and descriptions to choose from:
 - frontend_agent: an agent that can be a frontdesk kind of assistant for caregivers, it is best for keeping the conversation going, being engaging, caring, and helpful. It is not for generating well-thought-out recommendations or solutions. For example, if the user is asking for recommendations for babysitting services, the frontend agent should not be used.
 - task_generator_agent: an agent that can generate well-thought-out recommendations or solutions. It has access to tool calls below: online_general_online_search_with_one_query (Search the web with Firecrawl), online_google_places_search (Find places using Google Places API), online_website_map (Map websites and find relevant URLs using vector search), online_scrape_multiple_websites_after_website_map (Scrape multiple websites concurrently). For example, if the user is asking for recommendations for in-home care services, the task generator agent should be used.
 
+If a caregiver makes a comment or question about a topic fully unrelated to health and caregiving, the frontend agent should be used. Example questions: what is the weather like today, what is the stock price of Apple, What's the capital of Iceland? How do I make sourdough bread? Can you tell me a joke? What's the price of Bitcoin today? What time is it in Tokyo? When was the Eiffel Tower built? What's the best pizza topping? 
+
 I want you to choose the agent that best fits the user's input. The output should be a JSON object with the following format: {{"agent": "frontend_agent"}} or {{"agent": "task_generator_agent"}}. IMPORTANT: Do not include any additional text such as 'json' or 'json object' or explanation in the output. Only include the JSON object.
 """
 
 FRONTEND_AGENT_PROMPT = """
-You are a compassionate and professional frontend assistant specializing in caregiver support. Your primary role is to provide emotional support, maintain engaging conversations, and offer general guidance while being warm and empathetic.
+You are a compassionate and professional frontend assistant specializing in caregiver support. Your primary role is to provide emotional support, maintain engaging conversations, and offer general guidance while being warm and empathetic. 
+
+IMPORTANT: If a caregiver makes a comment or question about a topic fully unrelated to health and caregiving, you should provide a response that they'll only be able to discuss things related to health and caregiving. Example questions: what is the weather like today, what is the stock price of Apple, What's the capital of Iceland? How do I make sourdough bread? Can you tell me a joke? What's the price of Bitcoin today? What time is it in Tokyo? When was the Eiffel Tower built? What's the best pizza topping? etc. 
 
 ## Your Core Responsibilities:
 - **Emotional Support**: Acknowledge the challenges of caregiving and provide encouragement
@@ -79,25 +83,34 @@ Respond in a warm, caring manner that makes the caregiver feel heard, supported,
 """
 
 TASK_DELEGATION_PROMPT = """
-You are a friendly caregiver assistant who has just delegated the user's request to a specialized task solver. Your job is to:
-
-1. **Acknowledge the delegation**: Let them know you've passed their request to a specialist who will provide detailed help
-2. **Keep the conversation going**: Ask related questions or continue the natural flow of conversation
-3. **Be conversational and friendly**: Talk like a caring friend, not a robot
-4. **Show genuine interest**: Ask follow-up questions that show you care about their situation
+You are a friendly caregiver assistant who has just delegated the user's request to a specialized task solver. Your context is below:
 
 ## Context:
 **Chat History**: {chat_history}
 **User Information**: {user_info}
 **Router Decision**: The system decided to delegate this to the task solver because it requires detailed research/recommendations
 
-## Your Response Guidelines:
+There are only two scenarios you will encounter: 
+Scenario 1: in the chat history, there is a clear indication that the user is asking a follow-up question regarding a previous response from the task solver, not the frontend agent. how can you tell if this is the case? for example, if there is a response from the task solver agent one or two messages before the current user response, and the user is asking a question related to the previous response from the task solver agent, then this is a follow-up question.
+
+## Your Response Guidelines for Scenario 1:
+
+Only respond with "no response needed". All lower case, no additional text. Do not include any other text like "response", "answer", "json".
+
+Scenario 2: in the chat history, there is no clear indication that the user is asking a follow-up question regarding a previous response from the task solver, but the user is asking a question that requires detailed research/recommendations. In this case you should give them a filler response to keep the conversation going.
+
+
+## Your Response Guidelines for Scenario 2:
 - Keep it short (2-3 sentences max)
 - Acknowledge that you're getting them specialized help
 - Ask a related question to keep them engaged
 - Be warm and conversational
 - If they were being casual/chatty, match that tone
 - If they seem stressed, be supportive
+- Acknowledge the delegation: Let them know you've passed their request to a specialist who will provide detailed help
+- Keep the conversation going: Ask related questions or continue the natural flow of conversation
+- Be conversational and friendly: Talk like a caring friend, not a robot
+- Show genuine interest: Ask follow-up questions that show you care about their situation
 
 ## Examples:
 - "I've sent your request to our {{research specialist agent}} who'll find you some great options! You should hear from {{the corresponding agent}} soon. While they're working on that, {{ask a follow-up question to get more information about their needs}}"
@@ -277,36 +290,46 @@ async def task_generator_node(state: AgentState) -> dict:
                     delegation_task_id = str(uuid.uuid4())
                     
                     # Format response for chat interface (send to results topic)
-                    delegation_response = {
-                        "content": response.content,
-                        "source": "task-generator-delegation",
-                        "task_id": delegation_task_id,
-                        "type": "delegation_response",
-                        "user_id": user_id,
-                        "metadata": {
-                            "user_info": user_info,
-                            "original_task_delegated": True,
-                            "agent_type": "task_generator"
+                    if response.content.lower() != "no response needed":
+                        delegation_response = {
+                            "content": response.content,
+                            "source": "task-generator-delegation",
+                            "task_id": delegation_task_id,
+                            "type": "delegation_response",
+                            "user_id": user_id,
+                            "metadata": {
+                                "user_info": user_info,
+                                "original_task_delegated": True,
+                                "agent_type": "task_generator"
+                            }
                         }
-                    }
+                        
+                        # Send delegation response to Kafka results topic
+                        delegation_success = task_gen.send_result_to_kafka(delegation_response)
                     
-                    # Send delegation response to Kafka results topic
-                    delegation_success = task_gen.send_result_to_kafka(delegation_response)
+                        if delegation_success:
+                            logger.info("Delegation response sent to Kafka results topic")
+                        else:
+                            logger.error("Failed to send delegation response to Kafka")
                     
-                    if delegation_success:
-                        logger.info("Delegation response sent to Kafka results topic")
+                        return {
+                            "processed_data": {
+                                **task_data,
+                                "delegation_response": response.content,
+                                "delegation_task_id": delegation_task_id,
+                                "delegation_sent": delegation_success
+                            }
+                        }
                     else:
-                        logger.error("Failed to send delegation response to Kafka")
-                    
-                    return {
-                        "processed_data": {
-                            **task_data,
-                            "delegation_response": response.content,
-                            "delegation_task_id": delegation_task_id,
-                            "delegation_sent": delegation_success
+
+                        return {
+                            "processed_data": {
+                                **task_data,
+                                "delegation_response": response.content,
+                                "delegation_task_id": delegation_task_id,
+                                "delegation_sent": True
+                            }
                         }
-                    }
-                    
                 except Exception as e:
                     logger.error(f"Error generating delegation response: {e}")
                     # Still return success for the main task delegation

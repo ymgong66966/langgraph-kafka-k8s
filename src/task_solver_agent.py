@@ -187,11 +187,13 @@ class TaskSolverAgent:
         
         async with client:
             fastmcp_tools = await client.list_tools()
+            tool_descriptions = [tool.description for tool in fastmcp_tools]
             tools = [self.convert_fastmcp_tool_to_openai_format(tool) for tool in fastmcp_tools]
             self.tool_name_mapping = {
                 self.sanitize_tool_name(tool.name): tool.name 
                 for tool in fastmcp_tools
             }
+            tool_informations = [{"tool_name": self.sanitize_tool_name(tool.name), "description": tool.description, "input_schema": tool.inputSchema, "output_schema": tool.outputSchema} for tool in fastmcp_tools]
         
         # Only add system message at the very beginning
         has_ai_messages = any(isinstance(msg, AIMessage) for msg in messages)
@@ -202,12 +204,7 @@ class TaskSolverAgent:
 User Information: {user_info}
 
 Available MCP Tools:
-- online_general_online_search_with_one_query: Search the web with Firecrawl
-- online_google_places_search: Find places using Google Places API
-- online_website_map: Map websites and find relevant URLs using vector search
-- online_scrape_multiple_websites_after_website_map: Scrape multiple websites concurrently
-- add: Add two numbers
-- find_products: Find products
+{tool_informations}
 
 Tool Call Status: {tool_call_count}/{max_calls} calls used.
 
@@ -215,6 +212,23 @@ Instructions:
 1. If you need more information to answer the user's question and haven't reached the tool limit, use the appropriate tools.
 2. If you've used {max_calls} tools or have enough information, provide a comprehensive final answer.
 3. Choose tools strategically - use search for general info, places for locations, website mapping for specific domains.
+For example, for questions like: What Medicaid benefits are available in my state? Which local agencies provide in-home care? Are there adult daycare centers near me? Where can I rent a hospital bed for home use? What local resources help with incontinence supplies? 
+
+Useful route #1 to consider is:
+You need to get the location info from user_info first, either the user's location or the care recipient's location. And then you can use google maps to search for relevant places and get their website domain. And then, you can use online_website_map tool to get the website urls that may contain the answer. And then you can use online_scrape_multiple_websites_after_website_map tool to scrape the websites and generate the answer based on the scraped content.
+
+
+Useful route #2 to consider is:
+
+Use online_general_online_search_with_one_query tool to search for relevant information on the internet with a query contain location info and the user's need. If the returned websites have useful info, then answer based on the scraped content. Otherwise, you can either choose to take useful route #2 or modify your search query and do online_general_online_search_with_one_query again.
+
+
+Be flexible on the strategy. Because you could be handling a new question or a follow-up question of your previous answer. If it is a follow-up, you don't have to follow the routes from the beginning. For example, maybe you can jump to online_website_map with a known domain from the conversational context and just provide the urls as your answer. Maybe there are previous previous website scrapes in the context that you can directly use without calling a tool, etc.
+But note that typically online_scrape_multiple_websites_after_website_map tool should be used after online_website_map tool, if you ever decide to use it.
+
+
+Important, you should generate your tool calls following the inputSchema of the tools. 
+
 4. Always explain your reasoning and provide detailed, helpful responses.
 5. You MUST output your reasoning in the content field AND make tool calls if needed.
 """
