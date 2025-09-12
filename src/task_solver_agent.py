@@ -65,6 +65,7 @@ class AgentState(TypedDict):
     """State for the MCP-powered LangGraph agent"""
     messages: Annotated[List[BaseMessage], add]
     user_info: str
+    user_question: str  # Original user question to keep context clear
     tool_call_count: int
     max_tool_calls: int
 
@@ -195,17 +196,111 @@ class TaskSolverAgent:
             }
         }
         
-    def should_continue(self, state: AgentState) -> Literal["tools", "final_answer"]:
-        """Determine whether to continue with tools or provide final answer"""
-        last_message = state["messages"][-1]
+    async def should_continue(self, state: AgentState) -> Literal["agent", "final_answer"]:
+        """Use LLM to intelligently decide whether to continue research or provide final answer"""
+        messages = state["messages"]
+        user_question = state["user_question"] 
+        user_info = state["user_info"]
+        tool_call_count = state["tool_call_count"]
+        max_calls = state["max_tool_calls"]
         
-        if state["tool_call_count"] >= state["max_tool_calls"]:
+        # Force final answer if at tool limit
+        if tool_call_count >= max_calls:
+            logger.info("🚫 Tool limit reached - routing to final_answer")
             return "final_answer"
         
-        if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-            return "tools"
+        # Get recent tool results for analysis
+        tool_messages = [msg for msg in messages if isinstance(msg, ToolMessage)]
+        recent_tools = tool_messages[-3:] if len(tool_messages) > 3 else tool_messages  # Last 3 tool results
         
-        return "final_answer"
+        if not tool_messages:
+            # No tools executed yet, continue with agent
+            logger.info("🔧 No tools executed yet - routing to agent") 
+            return "agent"
+        
+        # Create LLM routing prompt to analyze tool results
+        routing_prompt = f"""You are a research completion analyzer. Your job is to determine if enough information has been gathered to fully answer the user's question.
+
+🎯 ORIGINAL USER QUESTION: "{user_question}"
+
+👤 USER CONTEXT: {user_info}
+
+🔍 RESEARCH STATUS:
+• Tools used: {tool_call_count}/{max_calls}
+• Tool results gathered: {len(tool_messages)} total
+
+📊 RECENT TOOL RESULTS TO ANALYZE:
+{self._format_recent_tools_for_routing(recent_tools)}
+
+🤔 ROUTING DECISION REQUIRED:
+Analyze the tool results above and decide:
+
+**Route to "CONTINUE_RESEARCH"** if:
+- Tool results are incomplete or insufficient for the user's question
+- Missing key information (specific details, contact info, locations, etc.)
+- User question has multiple parts that aren't fully addressed
+- Tool results contain errors or need verification from different sources
+
+**Route to "FINAL_ANSWER"** if:
+- Tool results provide comprehensive information to fully answer the question
+- You have sufficient specific details (names, addresses, contacts, services, etc.)
+- The gathered data directly addresses all parts of the user's question
+- Additional tools would likely provide redundant information
+
+RESPOND WITH ONLY: "CONTINUE_RESEARCH" or "FINAL_ANSWER". Do not provide any additional text such as "answer" or "decision".
+
+Decision:"""
+
+        # Use LLM to make routing decision
+        try:
+            routing_llm = ChatOpenAI(
+                model="gpt-4o-mini",  # Use faster model for routing decisions
+                temperature=0.1,
+                api_key=OPENAI_API_KEY
+            )
+            
+            response = await routing_llm.ainvoke([HumanMessage(content=routing_prompt)])
+            decision = response.content.strip().upper()
+            
+            logger.info(f"🤖 LLM routing decision: {decision}")
+            
+            if "CONTINUE_RESEARCH" in decision:
+                return "agent"
+            elif "FINAL_ANSWER" in decision:
+                return "final_answer"
+            else:
+                # Fallback: if unclear response, continue research if tools available
+                logger.warning(f"⚠️ Unclear LLM routing response: {decision}, defaulting to agent")
+                return "agent"
+                
+        except Exception as e:
+            logger.error(f"❌ Error in LLM routing decision: {e}")
+            # Fallback: continue if we have tools left, otherwise final answer
+            return "agent" if tool_call_count < max_calls else "final_answer"
+    
+    def _format_recent_tools_for_routing(self, tool_messages: List[ToolMessage]) -> str:
+        """Format recent tool messages for routing decision prompt"""
+        if not tool_messages:
+            return "No tool results available."
+        
+        formatted = []
+        for i, tool_msg in enumerate(tool_messages, 1):
+            # Extract tool name from the formatted content
+            content_lines = tool_msg.content.split('\n')
+            tool_name = "Unknown Tool"
+            if content_lines and "TOOL EXECUTED:" in content_lines[0]:
+                tool_name = content_lines[0].replace("🔧 TOOL EXECUTED:", "").strip()
+            
+            # Get a summary of the result (first 300 chars after the header)
+            content_start = tool_msg.content.find("📊") or tool_msg.content.find("📋") or tool_msg.content.find("📄")
+            if content_start > 0:
+                result_summary = tool_msg.content[content_start:content_start+300].replace('\n', ' ')
+            else:
+                result_summary = tool_msg.content[:300].replace('\n', ' ')
+            
+            formatted.append(f"Tool {i}: {tool_name}\nResult: {result_summary}...")
+        
+        return "\n\n".join(formatted)
     
     async def agent_node(self, state: AgentState) -> Dict[str, Any]:
         """Main agent node that decides whether to use tools or provide answer"""
@@ -272,15 +367,43 @@ Important, you should generate your tool calls following the inputSchema of the 
 """
             messages_with_system = [HumanMessage(content=system_prompt)] + messages
         else:
-            messages_with_system = messages
+            # For subsequent interactions, add context guidance to help LLM use tool results
+            tool_messages = [msg for msg in messages if isinstance(msg, ToolMessage)]
+            
+            if tool_messages and tool_call_count < max_calls:
+                # Add guidance prompt that instructs LLM to analyze tool results for next decision
+                guidance_prompt = f"""
+Based on the tool results above and the user's request, decide your next action:
+
+CURRENT STATUS: {tool_call_count}/{max_calls} tools used, {max_calls - tool_call_count} remaining
+
+DECISION PROCESS:
+1. **ANALYZE TOOL RESULTS**: Review the specific data gathered from previous tool calls above
+2. **ASSESS COMPLETENESS**: Do you have sufficient information to fully answer the user's question?
+3. **STRATEGIC NEXT STEP**: 
+   - If you have comprehensive data → Stop using tools, provide final answer
+   - If you need more specific details → Use remaining tools strategically  
+   - If user asked follow-up → Focus tools on the new specific requirement
+
+IMPORTANT: Base your decision on the actual tool results visible in this conversation, not assumptions.
+"""
+                messages_with_system = messages + [HumanMessage(content=guidance_prompt)]
+            else:
+                messages_with_system = messages
+        
+        # Add debugging for agent decision context
+        logger.info(f"🤔 Agent deciding: {tool_call_count}/{max_calls} tools used, {len(messages)} messages in context")
         
         # Bind tools to the model if we haven't hit the limit
         if tool_call_count < max_calls and tools:
             model_with_tools = self.llm.bind(tools=tools)
+            logger.info("🔧 Agent has access to tools for this decision")
         else:
             model_with_tools = self.llm
+            logger.info("🚫 Agent cannot use tools (limit reached or no tools available)")
         
         response = await model_with_tools.ainvoke(messages_with_system)
+        logger.info(f"🎭 Agent response: {'has tool calls' if hasattr(response, 'tool_calls') and response.tool_calls else 'no tool calls'}")
         return {"messages": [response]}
     
     async def tool_node(self, state: AgentState) -> Dict[str, Any]:
@@ -417,14 +540,14 @@ Now provide a detailed, actionable response that directly incorporates the tool 
         # Add edges
         workflow.add_edge(START, "agent")
         workflow.add_conditional_edges(
-            "agent",
+            "tools",
             self.should_continue,
             {
-                "tools": "tools",
+                "agent": "agent",
                 "final_answer": "final_answer"
             }
         )
-        workflow.add_edge("tools", "agent")
+        workflow.add_edge("agent", "tools")
         workflow.add_edge("final_answer", END)
         
         return workflow.compile(checkpointer=self.memory)
@@ -456,6 +579,17 @@ Now provide a detailed, actionable response that directly incorporates the tool 
             content = task_data.get('task_description', task_data.get('content', 'Please help me with this task.'))
             messages = [HumanMessage(content=content)]
         
+        # Extract original user question from first human message for routing context
+        user_question = ""
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                user_question = msg.content
+                break
+        
+        # Fallback if no HumanMessage found
+        if not user_question:
+            user_question = task_data.get('task_description', task_data.get('content', 'Please help me with this task.'))
+        
         try:
             # Initialize graph if not already done
             if not self.graph:
@@ -465,6 +599,7 @@ Now provide a detailed, actionable response that directly incorporates the tool 
             initial_state = {
                 "messages": messages,
                 "user_info": user_info,
+                "user_question": user_question,  # Original user question for routing context
                 "tool_call_count": 0,
                 "max_tool_calls": self.max_tool_calls
             }
