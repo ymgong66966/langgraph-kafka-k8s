@@ -146,6 +146,43 @@ class TaskSolverAgent:
         sanitized = re.sub(r'_+', '_', sanitized).strip('_')
         return sanitized
     
+    def _format_tool_result(self, observation, tool_name: str = "unknown") -> str:
+        """Format tool results for better LLM understanding"""
+        try:
+            if isinstance(observation, dict):
+                # Structure JSON results with better formatting
+                if len(str(observation)) > 2000:
+                    # For very large results, provide summary
+                    keys = list(observation.keys())[:5]
+                    preview = {k: observation[k] for k in keys if k in observation}
+                    return f"📊 Large JSON result ({len(observation)} keys):\n{json.dumps(preview, indent=2)}\n... (truncated - use data from {tool_name})"
+                else:
+                    return f"📊 JSON data:\n{json.dumps(observation, indent=2)}"
+            elif isinstance(observation, list):
+                # Format list results with bullets for better readability
+                if len(observation) > 20:
+                    preview_items = observation[:15]
+                    formatted = "\n".join([f"• {item}" for item in preview_items])
+                    return f"📋 List results ({len(observation)} total):\n{formatted}\n... (showing first 15 items)"
+                else:
+                    return f"📋 List results:\n" + "\n".join([f"• {item}" for item in observation])
+            elif isinstance(observation, str):
+                # Handle string results with proper truncation
+                if len(observation) > 1500:
+                    return f"📄 Text result ({len(observation)} chars):\n{observation[:1200]}...\n\n[Content truncated - full data available for analysis]"
+                else:
+                    return f"📄 Text result:\n{observation}"
+            else:
+                # Handle other types
+                result_str = str(observation)
+                if len(result_str) > 1000:
+                    return f"📊 Result ({type(observation).__name__}):\n{result_str[:800]}...\n[Truncated - {len(result_str)} total characters]"
+                else:
+                    return f"📊 Result ({type(observation).__name__}):\n{result_str}"
+        except Exception as e:
+            # Fallback for any formatting errors
+            return f"📊 Raw result (formatting error: {e}):\n{str(observation)[:1000]}..."
+    
     def convert_fastmcp_tool_to_openai_format(self, tool):
         """Convert FastMCP tool to OpenAI function format"""
         sanitized_name = self.sanitize_tool_name(tool.name)
@@ -260,15 +297,26 @@ Important, you should generate your tool calls following the inputSchema of the 
             tool_messages = []
             tools_used = 0
             
+            logger.info(f"🔧 Executing {len(last_message.tool_calls)} tool calls")
+            
             for tool_call in last_message.tool_calls:
                 try:
                     sanitized_name = tool_call["name"]
                     original_name = getattr(self, 'tool_name_mapping', {}).get(sanitized_name, sanitized_name)
                     
+                    logger.info(f"🛠️ Calling tool: {original_name} with args: {json.dumps(tool_call['args'])}")
                     observation = await client.call_tool(original_name, tool_call["args"])
+                    logger.info(f"✅ Tool {original_name} returned {len(str(observation))} chars of data")
                     
+                    # Create enhanced, contextual tool message
+                    formatted_result = self._format_tool_result(observation, original_name)
                     tool_message = ToolMessage(
-                        content=str(observation),
+                        content=f"""🔧 TOOL EXECUTED: {original_name}
+📝 Called with parameters: {json.dumps(tool_call["args"], indent=2)}
+
+{formatted_result}
+
+---""",
                         tool_call_id=tool_call["id"]
                     )
                     tool_messages.append(tool_message)
@@ -276,7 +324,12 @@ Important, you should generate your tool calls following the inputSchema of the 
                     
                 except Exception as e:
                     error_message = ToolMessage(
-                        content=f"Error executing tool {tool_call['name']}: {str(e)}",
+                        content=f"""❌ TOOL ERROR: {tool_call['name']}
+📝 Called with parameters: {json.dumps(tool_call.get("args", {}), indent=2)}
+🚨 Error: {str(e)}
+
+Please try a different approach or tool.
+---""",
                         tool_call_id=tool_call["id"]
                     )
                     tool_messages.append(error_message)
@@ -292,17 +345,63 @@ Important, you should generate your tool calls following the inputSchema of the 
         messages = state["messages"]
         user_info = state["user_info"]
         tool_call_count = state["tool_call_count"]
+        max_tools = state["max_tool_calls"]
         
-        final_prompt = f"""Based on the conversation and any tool results gathered, provide a comprehensive final answer to the user's question.
+        # Count and analyze tool results for context
+        tool_messages = [msg for msg in messages if isinstance(msg, ToolMessage)]
+        tool_summary = ""
+        
+        if tool_messages:
+            successful_tools = [msg for msg in tool_messages if not msg.content.startswith("❌")]
+            failed_tools = [msg for msg in tool_messages if msg.content.startswith("❌")]
+            
+            tool_summary = f"""
+🛠️ TOOL EXECUTION SUMMARY:
+• Total tools used: {tool_call_count}/{max_tools}
+• Successful: {len(successful_tools)}
+• Failed: {len(failed_tools)}
+• Tool results are available in the conversation above"""
+            
+            if failed_tools:
+                tool_summary += f"\n• Note: {len(failed_tools)} tools encountered errors - work with available data"
+        
+        # Add debugging and validation logging
+        logger.info(f"🎯 Final answer processing: {len(messages)} total messages, {len(tool_messages)} tool results")
+        
+        # Log tool results for debugging
+        for i, tool_msg in enumerate(tool_messages):
+            content_preview = tool_msg.content[:150].replace('\n', ' ')
+            logger.info(f"Tool result {i+1}: {content_preview}...")
+        
+        # Enhanced final prompt that explicitly instructs LLM to use tool results
+        final_prompt = f"""🎯 FINAL ANSWER GENERATION
 
-User Information: {user_info}
-Tools used: {tool_call_count}/{state["max_tool_calls"]}
+You are now ready to provide the comprehensive final answer based on ALL information gathered.
 
-Provide a detailed, helpful response that addresses the user's needs. If you used tools, synthesize the information gathered. If you reached the tool limit, acknowledge this and provide the best answer possible with available information.
-"""
+{tool_summary}
+
+📋 CRITICAL INSTRUCTIONS:
+1. **CAREFULLY REVIEW** all tool results above in the conversation
+2. **SYNTHESIZE AND USE** the specific data, names, addresses, phone numbers, and details from tool results
+3. **DO NOT** provide generic responses - use the actual research data gathered
+4. **STRUCTURE** your response with specific recommendations based on tool findings
+5. **CITE SPECIFIC** businesses, services, locations, and contact information found by the tools
+6. **ACKNOWLEDGE** if tool results were insufficient and explain what information is missing
+
+👤 User Context: {user_info}
+🔧 Research Completed: {tool_call_count}/{max_tools} tools executed
+
+Now provide a detailed, actionable response that directly incorporates the tool research results:"""
         
         messages_with_prompt = messages + [HumanMessage(content=final_prompt)]
+        
+        # Log final message count for debugging
+        logger.info(f"🔀 Sending {len(messages_with_prompt)} messages to LLM for final answer")
+        
         response = await self.llm.ainvoke(messages_with_prompt)
+        
+        # Log response generation success
+        logger.info(f"✅ Final answer generated: {len(response.content)} characters")
         
         return {"messages": [response]}
 

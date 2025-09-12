@@ -146,7 +146,7 @@ def convert_conversation_to_messages(conversation_history: Union[str, List[Dict[
                 
                 if msg_type == "user" or msg_type == "human":
                     messages.append(HumanMessage(content=content))
-                elif msg_type == "assistant" or msg_type == "ai" or message.get("source") in ["task-generator", "mcp-task-solver", "frontend_agent"]:
+                elif msg_type == "assistant" or msg_type == "ai" or msg_type == "agent" or message.get("source") in ["task-generator", "mcp-task-solver", "frontend_agent", "agent"]:
                     messages.append(AIMessage(content=content))
                 elif content:  # If no type specified but has content, treat as user message
                     messages.append(HumanMessage(content=content))
