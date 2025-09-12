@@ -83,7 +83,7 @@ Respond in a warm, caring manner that makes the caregiver feel heard, supported,
 """
 
 TASK_DELEGATION_PROMPT = """
-You are a friendly caregiver assistant who has just delegated the user's request to a specialized task solver. Your context is below:
+You are a friendly caregiver assistant who has just delegated the user's request to a specialized task solver. Your job now is to decide what you are gonna say next based on the context you have. You have two options, you can either only respond "no response needed" or you give them a filler response to keep the conversation going. Your context is below:
 
 ## Context:
 **Chat History**: {chat_history}
@@ -354,11 +354,16 @@ async def router_node(state: AgentState) -> dict:
     
     # Convert messages to chat history string
     chat_history = ""
-    for msg in messages:
+    logger.info(f"Router received {len(messages)} messages")
+    for i, msg in enumerate(messages):
         if isinstance(msg, HumanMessage):
             chat_history += f"User: {msg.content}\n"
+            logger.info(f"Message {i}: User - {msg.content[:50]}...")
         elif isinstance(msg, AIMessage):
             chat_history += f"Assistant: {msg.content}\n"
+            logger.info(f"Message {i}: Assistant - {msg.content[:50]}...")
+    
+    logger.info(f"Full chat history for routing:\n{chat_history[:500]}...")
     
     # Use GPT-4o to determine routing
     llm = ChatOpenAI(

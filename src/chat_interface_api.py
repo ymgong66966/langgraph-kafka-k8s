@@ -225,13 +225,32 @@ async def send_message(message: ChatMessage):
         task_generator_url = "http://langgraph-kafka-task-generator:8001"
         
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Send to task generator with conversation history format
+            # Get conversation history BEFORE the current message 
+            # (broadcast_message already added it to messages list)
+            # Filter for user's messages and agent responses only (no system messages)
+            user_conversation = [
+                msg for msg in messages 
+                if msg.get('user_id') == message.user_id 
+                and msg.get('type') in ['user', 'agent', 'ai', 'assistant']
+                and msg.get('id') != user_message['id']  # Exclude the just-added message
+            ]
+            
+            # Get last 10 messages for better context (5 exchanges)
+            recent_conversation = user_conversation[-10:] if len(user_conversation) > 0 else []
+            
+            # Log conversation history details for debugging
+            logger.info(f"Conversation history: {len(recent_conversation)} previous messages for user {message.user_id}")
+            if recent_conversation:
+                logger.info(f"History preview: First={recent_conversation[0].get('content', '')[:50]}... Last={recent_conversation[-1].get('content', '')[:50]}...")
+            
+            # Send history WITHOUT current message (since we send it separately)
             payload = {
-                "conversation_history": message.content,
+                "conversation_history": recent_conversation,  # Previous messages only
+                "current_message": message.content,         # Current message separately
                 "user_id": message.user_id
             }
             
-            logger.info(f"Sending message to task generator: {payload}")
+            logger.info(f"Sending to task generator: current_message='{message.content[:100]}...', history_count={len(recent_conversation)}")
             response = await client.post(f"{task_generator_url}/generate-task", json=payload)
             
             if response.status_code == 200:

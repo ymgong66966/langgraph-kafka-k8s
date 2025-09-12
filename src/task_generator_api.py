@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import threading
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
@@ -32,7 +32,8 @@ results_consumer_running = False
 results_consumer_thread = None
 
 class TaskRequest(BaseModel):
-    conversation_history: str
+    conversation_history: Union[str, List[Dict[str, Any]]]  # Can be string or array of message objects
+    current_message: Optional[str] = None  # New field for current message
     user_id: Optional[str] = None
     user_info: Optional[str] = None
     context: Optional[str] = None
@@ -130,61 +131,81 @@ def kafka_results_consumer_loop():
         results_consumer_running = False
         consumer.close()
 
-def convert_conversation_to_messages(conversation_history: str) -> List[BaseMessage]:
-    """Convert conversation history string to LangChain messages"""
+def convert_conversation_to_messages(conversation_history: Union[str, List[Dict[str, Any]]], current_message: Optional[str] = None) -> List[BaseMessage]:
+    """Convert conversation history string or array to LangChain messages"""
     messages = []
     
-    # Simple parsing - split by lines and detect User/Assistant patterns
-    lines = conversation_history.strip().split('\n')
-    current_content = ""
-    current_role = None
-    
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-            
-        if line.startswith("User:"):
-            # Save previous message if exists
-            if current_role and current_content:
-                if current_role == "user":
-                    messages.append(HumanMessage(content=current_content.strip()))
-                elif current_role == "assistant":
-                    messages.append(AIMessage(content=current_content.strip()))
-            
-            # Start new user message
-            current_role = "user"
-            current_content = line[5:].strip()  # Remove "User:" prefix
-            
-        elif line.startswith("Assistant:"):
-            # Save previous message if exists
-            if current_role and current_content:
-                if current_role == "user":
-                    messages.append(HumanMessage(content=current_content.strip()))
-                elif current_role == "assistant":
-                    messages.append(AIMessage(content=current_content.strip()))
-            
-            # Start new assistant message
-            current_role = "assistant"
-            current_content = line[10:].strip()  # Remove "Assistant:" prefix
-            
-        else:
-            # Continue current message
-            if current_content:
-                current_content += " " + line
+    if isinstance(conversation_history, list):
+        # Handle array of message objects from chat interface
+        for message in conversation_history:
+            # Handle different message formats
+            if isinstance(message, dict):
+                # Check for different possible formats
+                msg_type = message.get("type") or message.get("role")
+                content = message.get("content", "")
+                
+                if msg_type == "user" or msg_type == "human":
+                    messages.append(HumanMessage(content=content))
+                elif msg_type == "assistant" or msg_type == "ai" or message.get("source") in ["task-generator", "mcp-task-solver", "frontend_agent"]:
+                    messages.append(AIMessage(content=content))
+                elif content:  # If no type specified but has content, treat as user message
+                    messages.append(HumanMessage(content=content))
+    elif isinstance(conversation_history, str) and conversation_history.strip():
+        # Simple parsing - split by lines and detect User/Assistant patterns
+        lines = conversation_history.strip().split('\n')
+        current_content = ""
+        current_role = None
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            if line.startswith("User:"):
+                # Save previous message if exists
+                if current_role and current_content:
+                    if current_role == "user":
+                        messages.append(HumanMessage(content=current_content.strip()))
+                    elif current_role == "assistant":
+                        messages.append(AIMessage(content=current_content.strip()))
+                
+                # Start new user message
+                current_role = "user"
+                current_content = line[5:].strip()  # Remove "User:" prefix
+                
+            elif line.startswith("Assistant:"):
+                # Save previous message if exists
+                if current_role and current_content:
+                    if current_role == "user":
+                        messages.append(HumanMessage(content=current_content.strip()))
+                    elif current_role == "assistant":
+                        messages.append(AIMessage(content=current_content.strip()))
+                
+                # Start new assistant message
+                current_role = "assistant"
+                current_content = line[10:].strip()  # Remove "Assistant:" prefix
+                
             else:
-                current_content = line
+                # Continue current message
+                if current_content:
+                    current_content += " " + line
+                else:
+                    current_content = line
+        
+        # Add final message
+        if current_role and current_content:
+            if current_role == "user":
+                messages.append(HumanMessage(content=current_content.strip()))
+            elif current_role == "assistant":
+                messages.append(AIMessage(content=current_content.strip()))
+        
+        # If no structured conversation found, treat entire input as user message
+        if not messages and conversation_history.strip():
+            messages.append(HumanMessage(content=conversation_history.strip()))
     
-    # Add final message
-    if current_role and current_content:
-        if current_role == "user":
-            messages.append(HumanMessage(content=current_content.strip()))
-        elif current_role == "assistant":
-            messages.append(AIMessage(content=current_content.strip()))
-    
-    # If no structured conversation found, treat entire input as user message
-    if not messages and conversation_history.strip():
-        messages.append(HumanMessage(content=conversation_history.strip()))
+    # Add current message if provided
+    if current_message and current_message.strip():
+        messages.append(HumanMessage(content=current_message.strip()))
     
     return messages
 
@@ -248,11 +269,15 @@ async def health_check():
 async def generate_task(request: TaskRequest):
     """Generate a task from conversation history using task_generator.py"""
     try:
-        # Convert conversation history to messages
-        messages = convert_conversation_to_messages(request.conversation_history)
+        # Log incoming request details
+        history_count = len(request.conversation_history) if isinstance(request.conversation_history, list) else 1
+        logger.info(f"Received request: history_count={history_count}, current_message='{request.current_message[:100] if request.current_message else 'None'}...', user_id={request.user_id}")
         
-        logger.info(f"Processing request with {len(messages)} messages")
-        logger.info(f"User ID: {request.user_id}")
+        # Convert conversation history to messages
+        messages = convert_conversation_to_messages(request.conversation_history, request.current_message)
+        
+        logger.info(f"After conversion: {len(messages)} total messages")
+        logger.info(f"Messages preview: {[f'{type(m).__name__}: {m.content[:50]}...' for m in messages[:3]]}")
         
         # Use the function from task_generator.py
         result = await generate_task_from_messages(
