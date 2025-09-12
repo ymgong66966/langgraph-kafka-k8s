@@ -204,7 +204,7 @@ class TaskSolverAgent:
 User Information: {user_info}
 
 Available MCP Tools:
-{tool_informations}
+{str(tool_informations)}
 
 Tool Call Status: {tool_call_count}/{max_calls} calls used.
 
@@ -227,7 +227,7 @@ Be flexible on the strategy. Because you could be handling a new question or a f
 But note that typically online_scrape_multiple_websites_after_website_map tool should be used after online_website_map tool, if you ever decide to use it.
 
 
-Important, you should generate your tool calls following the inputSchema of the tools. 
+Important, you should generate your tool calls following the inputSchema of the tools. For example, if inputSchema requires an array, you have to output an array in the tool call. you will be penalized if you don't follow the inputSchema. For example, if the inputSchema is 'query': {{'items': {{'type': 'string'}}, 'title': 'Query', 'type': 'array'}}, then you need to output a list of strings in the tool call for query.
 
 4. Always explain your reasoning and provide detailed, helpful responses.
 5. You MUST output your reasoning in the content field AND make tool calls if needed.
@@ -594,5 +594,6 @@ async def root():
     }
 
 if __name__ == "__main__":
+     
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8002)
