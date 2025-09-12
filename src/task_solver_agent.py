@@ -209,14 +209,22 @@ class TaskSolverAgent:
             logger.info("🚫 Tool limit reached - routing to final_answer")
             return "final_answer"
         
-        # Get recent tool results for analysis
-        tool_messages = [msg for msg in messages if isinstance(msg, ToolMessage)]
-        recent_tools = tool_messages[-3:] if len(tool_messages) > 3 else tool_messages  # Last 3 tool results
+        # CRITICAL: Check if the last agent message has tool calls
+        # If not, the agent decided not to use tools, so go to final_answer
+        last_ai_message = None
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage):
+                last_ai_message = msg
+                break
         
-        if not tool_messages:
-            # No tools executed yet, continue with agent
-            logger.info("🔧 No tools executed yet - routing to agent") 
+        if last_ai_message and hasattr(last_ai_message, 'tool_calls') and last_ai_message.tool_calls:
+            # Agent made tool calls, continue with agent after tools execute
+            logger.info(f"🔧 Agent made {len(last_ai_message.tool_calls)} tool calls - routing to agent")
             return "agent"
+        else:
+            # Agent didn't make tool calls, provide final answer
+            logger.info("✅ No tool calls from agent - routing to final_answer")
+            return "final_answer"
         
         # Create LLM routing prompt to analyze tool results
         routing_prompt = f"""You are a research completion analyzer. Your job is to determine if enough information has been gathered to fully answer the user's question.
@@ -272,7 +280,7 @@ Decision:"""
                 # Fallback: if unclear response, continue research if tools available
                 logger.warning(f"⚠️ Unclear LLM routing response: {decision}, defaulting to agent")
                 return "agent"
-                
+                print("test")
         except Exception as e:
             logger.error(f"❌ Error in LLM routing decision: {e}")
             # Fallback: continue if we have tools left, otherwise final answer
@@ -291,14 +299,8 @@ Decision:"""
             if content_lines and "TOOL EXECUTED:" in content_lines[0]:
                 tool_name = content_lines[0].replace("🔧 TOOL EXECUTED:", "").strip()
             
-            # Get a summary of the result (first 300 chars after the header)
-            content_start = tool_msg.content.find("📊") or tool_msg.content.find("📋") or tool_msg.content.find("📄")
-            if content_start > 0:
-                result_summary = tool_msg.content[content_start:content_start+300].replace('\n', ' ')
-            else:
-                result_summary = tool_msg.content[:300].replace('\n', ' ')
-            
-            formatted.append(f"Tool {i}: {tool_name}\nResult: {result_summary}...")
+            result_summary = tool_msg.content
+            formatted.append(f"Tool {i}: {tool_name}\nResult: {result_summary}")
         
         return "\n\n".join(formatted)
     
