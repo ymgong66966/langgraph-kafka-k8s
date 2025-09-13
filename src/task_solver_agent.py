@@ -392,7 +392,7 @@ DECISION PROCESS:
    - If you need more specific details → Use remaining tools strategically  
    - If user asked follow-up → Focus tools on the new specific requirement
 
-IMPORTANT: Base your decision on the actual tool results visible in this conversation, not assumptions.
+IMPORTANT: First of all, only make one tool call at a time. You will be annihilated if you make multiple tool calls. Second, Base your decision on the actual tool results visible in this conversation, not assumptions.
 """
                 messages_with_system = messages + [HumanMessage(content=guidance_prompt)]
             else:
