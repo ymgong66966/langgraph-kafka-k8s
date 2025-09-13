@@ -221,9 +221,10 @@ async def task_generator_node(state: AgentState) -> dict:
     if user_id and not user_info:
         user_info = task_gen.get_user_info(user_id)
     
-    # Convert LangChain messages to dict format for Kafka
+    # Convert LangChain messages to dict format for Kafka (last 10 messages only)
+    recent_messages = messages[-10:] if len(messages) > 10 else messages
     messages_data = []
-    for msg in messages:
+    for msg in recent_messages:
         if isinstance(msg, HumanMessage):
             messages_data.append({
                 "type": "human",
@@ -243,106 +244,107 @@ async def task_generator_node(state: AgentState) -> dict:
                 "content": str(msg.content) if hasattr(msg, 'content') else str(msg)
             })
     
-    # Prepare task data for the new format
-    task_data = {
-        "messages": messages_data,
-        "user_id": user_id,
-        "user_info": user_info
-    }
     
-    try:
-        # Send to Kafka
-        success = task_gen.send_to_kafka(task_data)
+            
+    # NEW: Generate conversational response after delegation
+    if not state.get('mock', False) and OPENAI_API_KEY:
+        # Convert messages to chat history string
+        chat_history = ""
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                chat_history += f"User: {msg.content}\n"
+            elif isinstance(msg, AIMessage):
+                chat_history += f"Assistant: {msg.content}\n"
         
-        if success:
-            logger.info("Task successfully sent to Kafka")
+        # Use GPT-4o for delegation response
+        llm = ChatOpenAI(
+            temperature=0.3,
+            api_key=OPENAI_API_KEY,
+            model="gpt-4o"
+        )
+        
+        prompt = PromptTemplate.from_template(TASK_DELEGATION_PROMPT)
+        chain = prompt | llm
+        
+        try:
+            # Generate delegation acknowledgment response
+            response = await chain.ainvoke({
+                "chat_history": chat_history,
+                "user_info": user_info
+            })
             
-            # NEW: Generate conversational response after delegation
-            if not state.get('mock', False) and OPENAI_API_KEY:
-                # Convert messages to chat history string
-                chat_history = ""
-                for msg in messages:
-                    if isinstance(msg, HumanMessage):
-                        chat_history += f"User: {msg.content}\n"
-                    elif isinstance(msg, AIMessage):
-                        chat_history += f"Assistant: {msg.content}\n"
+            logger.info(f"Delegation response generated: {response.content[:100]}...")
+            # Generate task_id for this delegation response
+            delegation_task_id = str(uuid.uuid4())
+            # Format response for chat interface (send to results topic)
+            if response.content.lower() != "no response needed":
+                # Prepare task data for the new format
+                task_data = {
+                    "messages": messages_data,
+                    "user_id": user_id,
+                    "user_info": user_info,
+                }
+    
+                success = task_gen.send_to_kafka(task_data)
                 
-                # Use GPT-4o for delegation response
-                llm = ChatOpenAI(
-                    temperature=0.3,
-                    api_key=OPENAI_API_KEY,
-                    model="gpt-4o"
-                )
+                if success:
+                    logger.info("Task successfully sent to Kafka")
+                else:
+                    logger.error("Failed to send task to Kafka")
+                delegation_response = {
+                    "content": response.content,
+                    "source": "task-generator-delegation",
+                    "task_id": delegation_task_id,
+                    "type": "delegation_response",
+                    "user_id": user_id,
+                    "metadata": {
+                        "user_info": user_info,
+                        "original_task_delegated": True,
+                        "agent_type": "task_generator"
+                    }
+                }
                 
-                prompt = PromptTemplate.from_template(TASK_DELEGATION_PROMPT)
-                chain = prompt | llm
-                
-                try:
-                    # Generate delegation acknowledgment response
-                    response = await chain.ainvoke({
-                        "chat_history": chat_history,
-                        "user_info": user_info
-                    })
-                    
-                    logger.info(f"Delegation response generated: {response.content[:100]}...")
-                    
-                    # Generate task_id for this delegation response
-                    delegation_task_id = str(uuid.uuid4())
-                    
-                    # Format response for chat interface (send to results topic)
-                    if response.content.lower() != "no response needed":
-                        delegation_response = {
-                            "content": response.content,
-                            "source": "task-generator-delegation",
-                            "task_id": delegation_task_id,
-                            "type": "delegation_response",
-                            "user_id": user_id,
-                            "metadata": {
-                                "user_info": user_info,
-                                "original_task_delegated": True,
-                                "agent_type": "task_generator"
-                            }
-                        }
-                        
-                        # Send delegation response to Kafka results topic
-                        delegation_success = task_gen.send_result_to_kafka(delegation_response)
-                    
-                        if delegation_success:
-                            logger.info("Delegation response sent to Kafka results topic")
-                        else:
-                            logger.error("Failed to send delegation response to Kafka")
-                    
-                        return {
-                            "processed_data": {
-                                **task_data,
-                                "delegation_response": response.content,
-                                "delegation_task_id": delegation_task_id,
-                                "delegation_sent": delegation_success
-                            }
-                        }
-                    else:
-
-                        return {
-                            "processed_data": {
-                                **task_data,
-                                "delegation_response": response.content,
-                                "delegation_task_id": delegation_task_id,
-                                "delegation_sent": True
-                            }
-                        }
-                except Exception as e:
-                    logger.error(f"Error generating delegation response: {e}")
-                    # Still return success for the main task delegation
-                    return {"processed_data": task_data}
+                # Send delegation response to Kafka results topic
+                delegation_success = task_gen.send_result_to_kafka(delegation_response)
             
-            return {"processed_data": task_data}
-        else:
-            logger.error("Failed to send task to Kafka")
-            return {"processed_data": {"error": "Failed to send task to Kafka"}}
+                if delegation_success:
+                    logger.info("Delegation response sent to Kafka results topic")
+                else:
+                    logger.error("Failed to send delegation response to Kafka")
             
-    except Exception as e:
-        logger.error(f"Task generation error: {e}")
-        return {"processed_data": {"error": str(e)}}
+                return {
+                    "processed_data": {
+                        **task_data,
+                        "delegation_response": response.content,
+                        "delegation_task_id": delegation_task_id,
+                        "delegation_sent": delegation_success
+                    }
+                }
+            else:
+                task_data = {
+                    "messages": messages_data,
+                    "user_id": user_id,
+                    "user_info": user_info,
+                }
+    
+                success = task_gen.send_to_kafka(task_data)
+                
+                if success:
+                    logger.info("Task successfully sent to Kafka")
+                else:
+                    logger.error("Failed to send task to Kafka")
+                return {
+                    "processed_data": {
+                        **task_data,
+                        "delegation_response": response.content,
+                        "delegation_task_id": delegation_task_id,
+                        "delegation_sent": True
+                    }
+                }
+            
+        except Exception as e:
+            logger.error(f"Task generation error: {e}")
+            return {"processed_data": {"error": str(e)}}
 
 async def router_node(state: AgentState) -> dict:
     """Router node to determine which agent to use"""

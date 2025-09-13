@@ -13,7 +13,7 @@ from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError
 from contextlib import asynccontextmanager
 from datetime import datetime
-
+import uuid
 # Import MCP LangGraph Agent
 from fastmcp import Client
 from langchain_openai import ChatOpenAI
@@ -39,12 +39,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Updated State for MCP integration
-class TaskSolverState(TypedDict):
-    task_id: str
-    messages: List[BaseMessage]
-    user_info: str
-    solution: Optional[str]
-    timestamp: str
+# class TaskSolverState(TypedDict):
+#     task_id: str
+#     messages: List[BaseMessage]
+#     user_info: str
+#     solution: Optional[str]
+#     timestamp: str
 
 class TaskRequest(BaseModel):
     task_id: Optional[str] = None
@@ -65,6 +65,7 @@ class AgentState(TypedDict):
     """State for the MCP-powered LangGraph agent"""
     messages: Annotated[List[BaseMessage], add]
     user_info: str
+    user_id: str
     user_question: str  # Original user question to keep context clear
     tool_call_count: int
     max_tool_calls: int
@@ -376,6 +377,10 @@ Important, you should generate your tool calls following the inputSchema of the 
                 # Add guidance prompt that instructs LLM to analyze tool results for next decision
                 guidance_prompt = f"""
 Based on the tool results above and the user's request, decide your next action:
+User Information: {user_info}
+
+Available MCP Tools:
+{str(tool_informations)}
 
 CURRENT STATUS: {tool_call_count}/{max_calls} tools used, {max_calls - tool_call_count} remaining
 
@@ -601,13 +606,14 @@ Now provide a detailed, actionable response that directly incorporates the tool 
             initial_state = {
                 "messages": messages,
                 "user_info": user_info,
+                "user_id": user_id,
                 "user_question": user_question,  # Original user question for routing context
                 "tool_call_count": 0,
                 "max_tool_calls": self.max_tool_calls
             }
-            
+            random_id = str(uuid.uuid4())
             # Run the MCP LangGraph with session-specific config
-            config = {"configurable": {"thread_id": user_id}}
+            config = {"configurable": {"thread_id": random_id}}
             result = await self.graph.ainvoke(initial_state, config)
             
             # Extract final response
