@@ -347,6 +347,8 @@ Instructions:
 1. If you need more information to answer the user's question and haven't reached the tool limit, use the appropriate tools.
 2. If you've used {max_calls} tools or have enough information, provide a comprehensive final answer.
 3. Choose tools strategically - use search for general info, places for locations, website mapping for specific domains.
+IMPORTANT: only make one tool call at a time. You will be annihilated if you make multiple tool calls. only make one tool call at a time. You will be annihilated if you make multiple tool calls.
+
 For example, for questions like: What Medicaid benefits are available in my state? Which local agencies provide in-home care? Are there adult daycare centers near me? Where can I rent a hospital bed for home use? What local resources help with incontinence supplies? 
 
 Useful route #1 to consider is:
@@ -365,8 +367,6 @@ But note that typically online_scrape_multiple_websites_after_website_map tool s
 Important, you should generate your tool calls following the inputSchema of the tools. For example, if inputSchema requires an array, you have to output an array in the tool call. you will be penalized if you don't follow the inputSchema. For example, if the inputSchema is 'query': {{'items': {{'type': 'string'}}, 'title': 'Query', 'type': 'array'}}, then you need to output a list of strings in the tool call for query such as: domain: angelshomecare.com
 'query': ['dementia care', 'services for elderly', 'senior care', 'dementia support']
 
-4. Always explain your reasoning and provide detailed, helpful responses.
-5. You MUST output your reasoning in the content field AND make tool calls if needed.
 """
             messages_with_system = [HumanMessage(content=system_prompt)] + messages
         else:
