@@ -148,42 +148,42 @@ class TaskSolverAgent:
         sanitized = re.sub(r'_+', '_', sanitized).strip('_')
         return sanitized
     
-    def _format_tool_result(self, observation, tool_name: str = "unknown") -> str:
-        """Format tool results for better LLM understanding"""
-        try:
-            if isinstance(observation, dict):
-                # Structure JSON results with better formatting
-                if len(str(observation)) > 2000:
-                    # For very large results, provide summary
-                    keys = list(observation.keys())[:5]
-                    preview = {k: observation[k] for k in keys if k in observation}
-                    return f"📊 Large JSON result ({len(observation)} keys):\n{json.dumps(preview, indent=2)}\n... (truncated - use data from {tool_name})"
-                else:
-                    return f"📊 JSON data:\n{json.dumps(observation, indent=2)}"
-            elif isinstance(observation, list):
-                # Format list results with bullets for better readability
-                if len(observation) > 20:
-                    preview_items = observation[:15]
-                    formatted = "\n".join([f"• {item}" for item in preview_items])
-                    return f"📋 List results ({len(observation)} total):\n{formatted}\n... (showing first 15 items)"
-                else:
-                    return f"📋 List results:\n" + "\n".join([f"• {item}" for item in observation])
-            elif isinstance(observation, str):
-                # Handle string results with proper truncation
-                if len(observation) > 1500:
-                    return f"📄 Text result ({len(observation)} chars):\n{observation[:1200]}...\n\n[Content truncated - full data available for analysis]"
-                else:
-                    return f"📄 Text result:\n{observation}"
-            else:
-                # Handle other types
-                result_str = str(observation)
-                if len(result_str) > 1000:
-                    return f"📊 Result ({type(observation).__name__}):\n{result_str[:800]}...\n[Truncated - {len(result_str)} total characters]"
-                else:
-                    return f"📊 Result ({type(observation).__name__}):\n{result_str}"
-        except Exception as e:
-            # Fallback for any formatting errors
-            return f"📊 Raw result (formatting error: {e}):\n{str(observation)[:1000]}..."
+    # def _format_tool_result(self, observation, tool_name: str = "unknown") -> str:
+    #     """Format tool results for better LLM understanding"""
+    #     try:
+    #         if isinstance(observation, dict):
+    #             # Structure JSON results with better formatting
+    #             if len(str(observation)) > 2000:
+    #                 # For very large results, provide summary
+    #                 keys = list(observation.keys())[:5]
+    #                 preview = {k: observation[k] for k in keys if k in observation}
+    #                 return f"📊 Large JSON result ({len(observation)} keys):\n{json.dumps(preview, indent=2)}\n... (truncated - use data from {tool_name})"
+    #             else:
+    #                 return f"📊 JSON data:\n{json.dumps(observation, indent=2)}"
+    #         elif isinstance(observation, list):
+    #             # Format list results with bullets for better readability
+    #             if len(observation) > 20:
+    #                 preview_items = observation[:15]
+    #                 formatted = "\n".join([f"• {item}" for item in preview_items])
+    #                 return f"📋 List results ({len(observation)} total):\n{formatted}\n... (showing first 15 items)"
+    #             else:
+    #                 return f"📋 List results:\n" + "\n".join([f"• {item}" for item in observation])
+    #         elif isinstance(observation, str):
+    #             # Handle string results with proper truncation
+    #             if len(observation) > 1500:
+    #                 return f"📄 Text result ({len(observation)} chars):\n{observation[:1200]}...\n\n[Content truncated - full data available for analysis]"
+    #             else:
+    #                 return f"📄 Text result:\n{observation}"
+    #         else:
+    #             # Handle other types
+    #             result_str = str(observation)
+    #             if len(result_str) > 1000:
+    #                 return f"📊 Result ({type(observation).__name__}):\n{result_str[:800]}...\n[Truncated - {len(result_str)} total characters]"
+    #             else:
+    #                 return f"📊 Result ({type(observation).__name__}):\n{result_str}"
+    #     except Exception as e:
+    #         # Fallback for any formatting errors
+    #         return f"📊 Raw result (formatting error: {e}):\n{str(observation)[:1000]}..."
     
     def convert_fastmcp_tool_to_openai_format(self, tool):
         """Convert FastMCP tool to OpenAI function format"""
@@ -433,7 +433,7 @@ IMPORTANT: First of all, only make one tool call at a time. You will be annihila
             tool_messages = []
             tools_used = 0
 
-            logger.info(f"🔧 Executing {len(last_message.tool_calls)} tool calls SEQUENTIALLY")
+            logger.info(f"🔧 Executing tool calls SEQUENTIALLY: {last_message.tool_calls}")
 
             # Sequential execution with delays and retries
             for i, tool_call in enumerate(last_message.tool_calls):
@@ -464,12 +464,11 @@ IMPORTANT: First of all, only make one tool call at a time. You will be annihila
                         logger.info(f"✅ Tool {original_name} returned {len(str(observation))} chars of data")
 
                         # Create enhanced, contextual tool message
-                        formatted_result = self._format_tool_result(observation, original_name)
                         tool_message = ToolMessage(
                             content=f"""🔧 TOOL EXECUTED: {original_name}
 📝 Called with parameters: {json.dumps(tool_call["args"], indent=2)}
 
-{formatted_result}
+{observation}
 
 ---""",
                             tool_call_id=tool_call["id"]
@@ -522,6 +521,7 @@ Please try a different approach or tool.
                     logger.warning(f"⚠️ Tool {original_name} ultimately failed after all retries")
 
             logger.info(f"🏁 Sequential tool execution complete: {tools_used} tools processed")
+            
             return {
                 "messages": tool_messages,
                 "tool_call_count": state["tool_call_count"] + tools_used
