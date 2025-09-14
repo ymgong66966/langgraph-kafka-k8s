@@ -429,7 +429,8 @@ IMPORTANT: First of all, only make one tool call at a time. You will be annihila
             
             logger.info(f"🔧 Executing {len(last_message.tool_calls)} tool calls")
             
-            for tool_call in last_message.tool_calls:
+            # Create async tasks for all tool calls
+            async def execute_single_tool(tool_call):
                 try:
                     sanitized_name = tool_call["name"]
                     original_name = getattr(self, 'tool_name_mapping', {}).get(sanitized_name, sanitized_name)
@@ -440,7 +441,7 @@ IMPORTANT: First of all, only make one tool call at a time. You will be annihila
                     
                     # Create enhanced, contextual tool message
                     formatted_result = self._format_tool_result(observation, original_name)
-                    tool_message = ToolMessage(
+                    return ToolMessage(
                         content=f"""🔧 TOOL EXECUTED: {original_name}
 📝 Called with parameters: {json.dumps(tool_call["args"], indent=2)}
 
@@ -449,11 +450,9 @@ IMPORTANT: First of all, only make one tool call at a time. You will be annihila
 ---""",
                         tool_call_id=tool_call["id"]
                     )
-                    tool_messages.append(tool_message)
-                    tools_used += 1
                     
                 except Exception as e:
-                    error_message = ToolMessage(
+                    return ToolMessage(
                         content=f"""❌ TOOL ERROR: {tool_call['name']}
 📝 Called with parameters: {json.dumps(tool_call.get("args", {}), indent=2)}
 🚨 Error: {str(e)}
@@ -462,8 +461,10 @@ Please try a different approach or tool.
 ---""",
                         tool_call_id=tool_call["id"]
                     )
-                    tool_messages.append(error_message)
-                    tools_used += 1
+            
+            # Execute all tool calls concurrently
+            tool_messages = await asyncio.gather(*[execute_single_tool(tool_call) for tool_call in last_message.tool_calls])
+            tools_used = 1
             
             return {
                 "messages": tool_messages,
