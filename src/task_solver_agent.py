@@ -447,7 +447,7 @@ IMPORTANT: First of all, only make one tool call at a time. You will be annihila
 {observation}
 
 ---""",
-                        tool_call_id=tool_call["id"]
+                        tool_call_id=str(uuid.uuid4())
                     )
                     
                 except Exception as e:
@@ -459,7 +459,7 @@ tool_call_args:
 {tool_call["args"]}
 Please try a different approach or tool.
 ---""",
-                        tool_call_id=tool_call["id"]
+                        tool_call_id=str(uuid.uuid4())
                     )
             
             # Execute all tool calls concurrently
@@ -472,7 +472,7 @@ Please try a different approach or tool.
             
             final_message = ToolMessage(
                 content=merged_content,
-                tool_call_id=tool_call["id"]
+                tool_call_id=str(uuid.uuid4())
             )
             return {
                 "messages": [final_message],
