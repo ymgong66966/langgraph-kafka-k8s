@@ -440,12 +440,11 @@ IMPORTANT: First of all, only make one tool call at a time. You will be annihila
                     logger.info(f"✅ Tool {original_name} returned {len(str(observation))} chars of data")
                     
                     # Create enhanced, contextual tool message
-                    formatted_result = self._format_tool_result(observation, original_name)
                     return ToolMessage(
                         content=f"""🔧 TOOL EXECUTED: {original_name}
 📝 Called with parameters: {json.dumps(tool_call["args"], indent=2)}
 
-{formatted_result}
+{observation}
 
 ---""",
                         tool_call_id=tool_call["id"]
@@ -455,8 +454,9 @@ IMPORTANT: First of all, only make one tool call at a time. You will be annihila
                     return ToolMessage(
                         content=f"""❌ TOOL ERROR: {tool_call['name']}
 📝 Called with parameters: {json.dumps(tool_call.get("args", {}), indent=2)}
-🚨 Error: {str(e)}
-
+🚨 Error: {str(e)},
+tool_call_args:
+{tool_call["args"]}
 Please try a different approach or tool.
 ---""",
                         tool_call_id=tool_call["id"]
@@ -465,9 +465,17 @@ Please try a different approach or tool.
             # Execute all tool calls concurrently
             tool_messages = await asyncio.gather(*[execute_single_tool(tool_call) for tool_call in last_message.tool_calls])
             tools_used = 1
+            merged_content = "\n\n" + "="*80 + "\n🔗 MERGED TOOL RESULTS\n" + "="*80 + "\n\n"
+            for i, tool_message in enumerate(tool_messages, 1):
+                merged_content += f"📋 RESULT {i}:\n" + "-"*40 + "\n"
+                merged_content += tool_message.content + "\n\n"
             
+            final_message = ToolMessage(
+                content=merged_content,
+                tool_call_id=tool_call["id"]
+            )
             return {
-                "messages": tool_messages,
+                "messages": [final_message],
                 "tool_call_count": state["tool_call_count"] + tools_used
             }
     
