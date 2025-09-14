@@ -431,51 +431,48 @@ IMPORTANT: First of all, only make one tool call at a time. You will be annihila
             
             # Create async tasks for all tool calls
             async def execute_single_tool(tool_call):
+                # Capture tool call info for error handling
+                tool_call_id = tool_call["id"]
+                tool_call_name = tool_call["name"]
+                tool_call_args = tool_call.get("args", {})
+                
                 try:
-                    sanitized_name = tool_call["name"]
+                    sanitized_name = tool_call_name
                     original_name = getattr(self, 'tool_name_mapping', {}).get(sanitized_name, sanitized_name)
                     
-                    logger.info(f"🛠️ Calling tool: {original_name} with args: {json.dumps(tool_call['args'])}")
-                    observation = await client.call_tool(original_name, tool_call["args"])
+                    logger.info(f"🛠️ Calling tool: {original_name} with args: {json.dumps(tool_call_args)}")
+                    observation = await client.call_tool(original_name, tool_call_args)
                     logger.info(f"✅ Tool {original_name} returned {len(str(observation))} chars of data")
                     
                     # Create enhanced, contextual tool message
                     return ToolMessage(
                         content=f"""🔧 TOOL EXECUTED: {original_name}
-📝 Called with parameters: {json.dumps(tool_call["args"], indent=2)}
+📝 Called with parameters: {json.dumps(tool_call_args, indent=2)}
 
 {observation}
 
 ---""",
-                        tool_call_id=str(uuid.uuid4())
+                        tool_call_id=tool_call_id
                     )
                     
                 except Exception as e:
                     return ToolMessage(
-                        content=f"""❌ TOOL ERROR: {tool_call['name']}
-📝 Called with parameters: {json.dumps(tool_call.get("args", {}), indent=2)}
+                        content=f"""❌ TOOL ERROR: {tool_call_name}
+📝 Called with parameters: {json.dumps(tool_call_args, indent=2)}
 🚨 Error: {str(e)},
 tool_call_args:
-{tool_call["args"]}
+{tool_call_args}
 Please try a different approach or tool.
 ---""",
-                        tool_call_id=str(uuid.uuid4())
+                        tool_call_id=tool_call_id
                     )
             
             # Execute all tool calls concurrently
             tool_messages = await asyncio.gather(*[execute_single_tool(tool_call) for tool_call in last_message.tool_calls])
-            tools_used = 1
-            merged_content = "\n\n" + "="*80 + "\n🔗 MERGED TOOL RESULTS\n" + "="*80 + "\n\n"
-            for i, tool_message in enumerate(tool_messages, 1):
-                merged_content += f"📋 RESULT {i}:\n" + "-"*40 + "\n"
-                merged_content += tool_message.content + "\n\n"
+            tools_used = 1 # only one tool call count no matter how many tools called at a time
             
-            final_message = ToolMessage(
-                content=merged_content,
-                tool_call_id=str(uuid.uuid4())
-            )
             return {
-                "messages": [final_message],
+                "messages": tool_messages,
                 "tool_call_count": state["tool_call_count"] + tools_used
             }
     
