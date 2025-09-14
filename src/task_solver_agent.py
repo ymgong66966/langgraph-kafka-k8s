@@ -347,7 +347,10 @@ Instructions:
 1. If you need more information to answer the user's question and haven't reached the tool limit, use the appropriate tools.
 2. If you've used {max_calls} tools or have enough information, provide a comprehensive final answer.
 3. Choose tools strategically - use search for general info, places for locations, website mapping for specific domains.
-IMPORTANT: only make one tool call at a time. You will be annihilated if you make multiple tool calls. only make one tool call at a time. You will be annihilated if you make multiple tool calls.
+4. RATE LIMITING AWARENESS: Web scraping tools are subject to API rate limits. Use them judiciously and avoid excessive scraping.
+5. CRITICAL: Only make ONE tool call at a time. Tools execute sequentially with delays to prevent rate limiting.
+   - Making multiple simultaneous tool calls will overwhelm external APIs
+   - Each tool call waits for completion before the next begins
 
 For example, for questions like: What Medicaid benefits are available in my state? Which local agencies provide in-home care? Are there adult daycare centers near me? Where can I rent a hospital bed for home use? What local resources help with incontinence supplies? 
 
@@ -414,63 +417,111 @@ IMPORTANT: First of all, only make one tool call at a time. You will be annihila
         return {"messages": [response]}
     
     async def tool_node(self, state: AgentState) -> Dict[str, Any]:
-        """Execute MCP tools and increment counter"""
+        """Execute MCP tools sequentially with rate limiting and robust error handling"""
+        import asyncio
+        import time
+
         client = Client({
             "enhanced_mcp": {
                 "url": self.mcp_server_url,
                 "transport": "streamable-http"
             }
         })
-        
+
         async with client:
             last_message = state["messages"][-1]
             tool_messages = []
             tools_used = 0
-            
-            logger.info(f"🔧 Executing {len(last_message.tool_calls)} tool calls")
-            
-            # Create async tasks for all tool calls
-            async def execute_single_tool(tool_call):
-                # Capture tool call info for error handling
-                tool_call_id = tool_call["id"]
-                tool_call_name = tool_call["name"]
-                tool_call_args = tool_call.get("args", {})
-                
-                try:
-                    sanitized_name = tool_call_name
-                    original_name = getattr(self, 'tool_name_mapping', {}).get(sanitized_name, sanitized_name)
-                    
-                    logger.info(f"🛠️ Calling tool: {original_name} with args: {json.dumps(tool_call_args)}")
-                    observation = await client.call_tool(original_name, tool_call_args)
-                    logger.info(f"✅ Tool {original_name} returned {len(str(observation))} chars of data")
-                    
-                    # Create enhanced, contextual tool message
-                    return ToolMessage(
-                        content=f"""🔧 TOOL EXECUTED: {original_name}
-📝 Called with parameters: {json.dumps(tool_call_args, indent=2)}
 
-{observation}
+            logger.info(f"🔧 Executing {len(last_message.tool_calls)} tool calls SEQUENTIALLY")
+
+            # Sequential execution with delays and retries
+            for i, tool_call in enumerate(last_message.tool_calls):
+                sanitized_name = tool_call["name"]
+                original_name = getattr(self, 'tool_name_mapping', {}).get(sanitized_name, sanitized_name)
+
+                logger.info(f"🛠️ [{i+1}/{len(last_message.tool_calls)}] Calling tool: {original_name}")
+
+                # Add delay between tool calls to prevent rate limiting
+                if i > 0:  # No delay before first tool
+                    delay = 1.5  # 1.5 second delay between tools
+                    logger.info(f"⏱️ Waiting {delay}s between tool calls...")
+                    await asyncio.sleep(delay)
+
+                # Execute tool with retry logic
+                success = False
+                max_retries = 3
+
+                for attempt in range(max_retries):
+                    try:
+                        if attempt > 0:
+                            # Exponential backoff: 2^attempt seconds
+                            backoff_delay = 2 ** attempt
+                            logger.info(f"🔄 Retry {attempt}/{max_retries-1} after {backoff_delay}s delay...")
+                            await asyncio.sleep(backoff_delay)
+
+                        observation = await client.call_tool(original_name, tool_call["args"])
+                        logger.info(f"✅ Tool {original_name} returned {len(str(observation))} chars of data")
+
+                        # Create enhanced, contextual tool message
+                        formatted_result = self._format_tool_result(observation, original_name)
+                        tool_message = ToolMessage(
+                            content=f"""🔧 TOOL EXECUTED: {original_name}
+📝 Called with parameters: {json.dumps(tool_call["args"], indent=2)}
+
+{formatted_result}
 
 ---""",
-                        tool_call_id=tool_call_id
-                    )
-                    
-                except Exception as e:
-                    return ToolMessage(
-                        content=f"""❌ TOOL ERROR: {tool_call_name}
-📝 Called with parameters: {json.dumps(tool_call_args, indent=2)}
-🚨 Error: {str(e)},
-tool_call_args:
-{tool_call_args}
+                            tool_call_id=tool_call["id"]
+                        )
+                        tool_messages.append(tool_message)
+                        tools_used += 1
+                        success = True
+                        break
+
+                    except Exception as e:
+                        error_str = str(e)
+                        is_rate_limit = "429" in error_str or "rate limit" in error_str.lower() or "too many requests" in error_str.lower()
+
+                        if is_rate_limit and attempt < max_retries - 1:
+                            logger.warning(f"🚫 Rate limit hit for {original_name}, retrying in {2**(attempt+1)}s...")
+                            continue  # Retry with exponential backoff
+                        else:
+                            # Final attempt failed or non-rate-limit error
+                            logger.error(f"❌ Tool {original_name} failed after {attempt+1} attempts: {error_str}")
+
+                            if is_rate_limit:
+                                error_message = ToolMessage(
+                                    content=f"""🚫 RATE LIMIT EXCEEDED: {original_name}
+📝 Called with parameters: {json.dumps(tool_call.get("args", {}), indent=2)}
+⚠️  API rate limit persistently hit after {max_retries} attempts with exponential backoff
+🔄 The external API (Firecrawl) is currently overwhelmed
+💡 Suggestion: Try fewer web scraping requests or wait before making more calls
+
+This tool call has been counted toward your limit to prevent further rate limiting.
+---""",
+                                    tool_call_id=tool_call["id"]
+                                )
+                            else:
+                                error_message = ToolMessage(
+                                    content=f"""❌ TOOL ERROR: {original_name}
+📝 Called with parameters: {json.dumps(tool_call.get("args", {}), indent=2)}
+🚨 Error: {error_str}
+🔄 Attempted {attempt+1} times with backoff
+
 Please try a different approach or tool.
 ---""",
-                        tool_call_id=tool_call_id
-                    )
-            
-            # Execute all tool calls concurrently
-            tool_messages = await asyncio.gather(*[execute_single_tool(tool_call) for tool_call in last_message.tool_calls])
-            tools_used = 1 # only one tool call count no matter how many tools called at a time
-            
+                                    tool_call_id=tool_call["id"]
+                                )
+
+                            tool_messages.append(error_message)
+                            tools_used += 1
+                            break
+
+                if not success:
+                    logger.warning(f"⚠️ Tool {original_name} ultimately failed after all retries")
+
+            logger.info(f"🏁 Sequential tool execution complete: {tools_used} tools processed")
             return {
                 "messages": tool_messages,
                 "tool_call_count": state["tool_call_count"] + tools_used
