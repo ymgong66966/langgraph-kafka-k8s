@@ -477,8 +477,8 @@ async def task_generator_node(state: AgentState) -> dict:
                     logger.info("Task successfully sent to Kafka")
                 else:
                     logger.error("Failed to send task to Kafka")
-                delegation_response = {
-                    "content": response.content,
+                filler_response = {
+                    "content": delegate_response.content,
                     "source": "task-generator-delegation",
                     "task_id": delegation_task_id,
                     "type": "delegation_response",
@@ -491,7 +491,7 @@ async def task_generator_node(state: AgentState) -> dict:
                 }
                 
                 # Send delegation response to Kafka results topic
-                delegation_success = task_gen.send_result_to_kafka(delegation_response)
+                delegation_success = task_gen.send_result_to_kafka(filler_response)
             
                 if delegation_success:
                     logger.info("Delegation response sent to Kafka results topic")
@@ -501,7 +501,7 @@ async def task_generator_node(state: AgentState) -> dict:
                 return {
                     "processed_data": {
                         **task_data,
-                        "delegation_response": response.content,
+                        "delegation_response": filler_response.content,
                         "delegation_task_id": delegation_task_id,
                         "delegation_sent": delegation_success
                     }
