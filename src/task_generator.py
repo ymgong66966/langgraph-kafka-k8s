@@ -176,16 +176,12 @@ Description: get general information from the internet about something asked by 
 
 Not recommended for: when the user is asking for some specific information about a website or company. In this case you should use website_map tool first to get the urls of interest. The only exception is when the website_map or scrape_multiple_websites_after_website_map tools didn't return meaningful results. This tool can be used as the last resort in that case.
 
-Input Schema: {'properties': {'query': {'title': 'Query', 'type': 'string'}}, 'required': ['query'], 'type': 'object'}
-Output Schema: {'properties': {'result': {'items': {'additionalProperties': True, 'type': 'object'}, 'title': 'Result', 'type': 'array'}}, 'required': ['result'], 'title': '_WrappedResult', 'type': 'object', 'x-fastmcp-wrap-result': True}
+
 
 Tool Name: /online_scrape_multiple_websites_after_website_map
 Description: Get information from a list of urls about a list of queries. The input: a list of urls (strings) and a list of queries (strings). The output: a list of dictionaries (each dictionary contains the "queries" (string), the "answer" (string)). Best for: When you know which websites/urls you are interested in and want to dive deep into these websites and scrape information about a certain topic. When you are using this tool, you should input a list of the urls you think are of interest from the context or previous tools, and a list of queries you want to scrape information about. Make sure your queries are super relevant to the user intent and concise, otherwise you will be punished harshly. 
 
 Not recommended for: when you only have a web domain or company front web page and still don't know which exact urls are of interest to you. In this case you should use website_map tool first to get the urls of interest.
-
-Input Schema: {'properties': {'urls': {'items': {'type': 'string'}, 'title': 'Urls', 'type': 'array'}, 'queries': {'items': {'type': 'string'}, 'title': 'Queries', 'type': 'array'}}, 'required': ['urls', 'queries'], 'type': 'object'}
-Output Schema: {'properties': {'result': {'items': {'additionalProperties': True, 'type': 'object'}, 'title': 'Result', 'type': 'array'}}, 'required': ['result'], 'title': '_WrappedResult', 'type': 'object', 'x-fastmcp-wrap-result': True}
 
 Tool Name: /online_website_map
 Description: Get relevant urls of a web domain about something asked by user. Best for: Finding specific information across multiple websites, when you don't know which website has the information. When you need the most relevant content for a query. 
@@ -197,23 +193,17 @@ Description: Get relevant urls of a web domain about something asked by user. Be
 Not recommended for: When you already know which urls to scrape and need comprehensive coverage of these urls (use scrape_multiple_websites_after_website_map tool)
 
 
-Input Schema: {'properties': {'url': {'default': 'https://firecrawl.dev', 'title': 'Url', 'type': 'string'}, 'search_queries': {'default': ['docs'], 'items': {'type': 'string'}, 'title': 'Search Queries', 'type': 'array'}}, 'type': 'object'}
-Output Schema: {'properties': {'result': {'items': {'additionalProperties': True, 'type': 'object'}, 'title': 'Result', 'type': 'array'}}, 'required': ['result'], 'title': '_WrappedResult', 'type': 'object', 'x-fastmcp-wrap-result': True}
-
 Tool Name: /online_google_places_search
 Description: None
-Input Schema: {'properties': {'location': {'title': 'Location', 'type': 'string'}, 'location_query': {'default': '', 'title': 'Location Query', 'type': 'string'}}, 'required': ['location'], 'type': 'object'}
-Output Schema: {'properties': {'result': {'items': {'additionalProperties': True, 'type': 'object'}, 'title': 'Result', 'type': 'array'}}, 'required': ['result'], 'title': '_WrappedResult', 'type': 'object', 'x-fastmcp-wrap-result': True}
+
 
 Tool Name: add
 Description: Adds two integer numbers together.
-Input Schema: {'properties': {'a': {'title': 'A', 'type': 'integer'}, 'b': {'title': 'B', 'type': 'integer'}}, 'required': ['a', 'b'], 'type': 'object'}
-Output Schema: {'properties': {'result': {'title': 'Result', 'type': 'integer'}}, 'required': ['result'], 'title': '_WrappedResult', 'type': 'object', 'x-fastmcp-wrap-result': True}
+
 
 Tool Name: find_products
 Description: Search the product catalog with optional category filtering.
-Input Schema: {'properties': {'query': {'title': 'Query', 'type': 'string'}, 'category': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Category'}}, 'required': ['query'], 'type': 'object'}
-Output Schema: {'properties': {'result': {'items': {'additionalProperties': True, 'type': 'object'}, 'title': 'Result', 'type': 'array'}}, 'required': ['result'], 'title': '_WrappedResult', 'type': 'object', 'x-fastmcp-wrap-result': True}
+
 #####################################
 
  ########################### Example Output ###########################
