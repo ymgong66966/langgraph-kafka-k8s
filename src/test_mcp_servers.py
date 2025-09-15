@@ -10,9 +10,15 @@ async def test_mcp_servers():
         
     async with client:
         fastmcp_tools = await client.list_tools()
-        tool_descriptions = [tool.description for tool in fastmcp_tools]
-        print(tool_descriptions)
-        print(fastmcp_tools)
+        tool_information_nice_print = ""
+        for tool in fastmcp_tools:
+            tool_information_nice_print += f"Tool Name: {tool.name}\n"
+            tool_information_nice_print += f"Description: {tool.description}\n"
+            tool_information_nice_print += f"Input Schema: {tool.inputSchema}\n"
+            tool_information_nice_print += f"Output Schema: {tool.outputSchema}\n"
+            tool_information_nice_print += "\n"
+        print(tool_information_nice_print)
+
         # tools = [convert_fastmcp_tool_to_openai_format(tool) for tool in fastmcp_tools]
         # tool_name_mapping = {
         #     sanitize_tool_name(tool.name): tool.name 

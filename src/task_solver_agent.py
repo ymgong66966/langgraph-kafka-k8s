@@ -322,7 +322,6 @@ Decision:"""
         
         async with client:
             fastmcp_tools = await client.list_tools()
-            tool_descriptions = [tool.description for tool in fastmcp_tools]
             tools = [self.convert_fastmcp_tool_to_openai_format(tool) for tool in fastmcp_tools]
             self.tool_name_mapping = {
                 self.sanitize_tool_name(tool.name): tool.name 
