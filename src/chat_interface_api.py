@@ -13,17 +13,7 @@ import logging
 import os
 from kafka import KafkaConsumer
 import threading
-
-app = FastAPI(title="Chat Interface API", version="1.0.0")
-
-# Enable CORS for frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+from contextlib import asynccontextmanager
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -178,12 +168,47 @@ def kafka_response_consumer():
     finally:
         kafka_consumer_running = False
 
-# Start Kafka consumer in background thread
 def start_kafka_consumer():
     if not kafka_consumer_running:
         thread = threading.Thread(target=kafka_response_consumer, daemon=True)
         thread.start()
         logger.info("Started Kafka consumer thread")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifecycle management"""
+    # Startup
+    logger.info("Starting Chat Interface API...")
+    
+    # Validate environment variables
+    if not KAFKA_BOOTSTRAP_SERVERS:
+        logger.error("KAFKA_BOOTSTRAP_SERVERS not configured")
+    if not KAFKA_RESPONSE_TOPIC:
+        logger.error("KAFKA_RESPONSE_TOPIC not configured")
+    if not OPENAI_API_KEY:
+        logger.warning("OPENAI_API_KEY not configured")
+    
+    # Start Kafka consumer with delay to ensure Kafka is ready
+    import asyncio
+    await asyncio.sleep(10)  # Wait for Kafka to be ready
+    start_kafka_consumer()
+    logger.info("Chat Interface API started with Kafka consumer")
+    
+    yield
+    
+    # Shutdown (if needed)
+    logger.info("Chat Interface API shutting down")
+
+app = FastAPI(title="Chat Interface API", version="1.0.0", lifespan=lifespan)
+
+# Enable CORS for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 async def root():
@@ -361,25 +386,6 @@ async def chat_stream(user_id: Optional[str] = Query(None)):
             "Access-Control-Allow-Headers": "*",
         }
     )
-
-@app.on_event("startup")
-async def startup_event():
-    """Start Kafka consumer when FastAPI starts"""
-    logger.info("Starting Chat Interface API...")
-    
-    # Validate environment variables
-    if not KAFKA_BOOTSTRAP_SERVERS:
-        logger.error("KAFKA_BOOTSTRAP_SERVERS not configured")
-    if not KAFKA_RESPONSE_TOPIC:
-        logger.error("KAFKA_RESPONSE_TOPIC not configured")
-    if not OPENAI_API_KEY:
-        logger.warning("OPENAI_API_KEY not configured")
-    
-    # Start Kafka consumer with delay to ensure Kafka is ready
-    import asyncio
-    await asyncio.sleep(10)  # Wait for Kafka to be ready
-    start_kafka_consumer()
-    logger.info("Chat Interface API started with Kafka consumer")
 
 # Serve static files (frontend)
 app.mount("/static", StaticFiles(directory="static", html=True), name="static")
