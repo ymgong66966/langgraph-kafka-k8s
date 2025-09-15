@@ -7,3 +7,4 @@ langgraph==0.2.38
 langgraph-sdk==0.1.32
 requests==2.31.0
 pydantic==2.5.0
+fastmcp
