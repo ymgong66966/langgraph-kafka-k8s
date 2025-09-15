@@ -457,7 +457,7 @@ async def task_generator_node(state: AgentState) -> dict:
                 "chat_history": chat_history,
                 "user_info": user_info,
                 "user_question": user_question,
-                "mcp_tool_context": tool_informations
+                "mcp_tool_context": tool_information_nice_print
             })
             planner_plan = response.content
             logger.info(f"Delegation response generated: {response.content[:100]}...")
