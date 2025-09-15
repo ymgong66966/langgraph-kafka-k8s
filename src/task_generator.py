@@ -39,6 +39,18 @@ Here are the agent names and descriptions to choose from:
 
 If a caregiver makes a comment or question about a topic fully unrelated to health and caregiving, the frontend agent should be used. Example questions:  what is the weather like today, what is the stock price of Apple, What's the capital of Iceland? How do I make sourdough bread? Can you tell me a joke? What's the price of Bitcoin today? What time is it in Tokyo? When was the Eiffel Tower built? What's the best pizza topping? There are some questions very deceiving, becasue they sounds like a question that requires in-depth search or recommendations but in fact they have nothing to do with caregiving, for example, if the user asks for recommendations for restaurants, the frontend agent should be used. If the user asks oh can you compare the prices of stocks, the frontend agent should be used.
 
+If the user's latest response is answering a filler question and does not have a lot of information, the frontend agent should be used. For example, if the chat history looks like this:
+
+/////////
+User:
+i specifically want to know if the services can be covered by the insurance of veteran
+AI:
+I’ll be checking each agency’s website for details about whether their services can be covered by veteran insurance or VA benefits. This involves looking through several sources for each agency, so it may take a little while. I know navigating insurance and benefits can be overwhelming—are you helping a specific veteran, or just exploring options for now? If you have any other questions or concerns, feel free to share!
+User:
+just exploring
+//////////
+you should route to the frontend agent because the user is simply providing you some more context about a previous request, not asking you to complete a task 
+
 I want you to choose the agent that best fits the user's input. The output should be a JSON object with the following format: {{"agent": "frontend_agent"}} or {{"agent": "task_generator_agent"}}. IMPORTANT: Do not include any additional text such as 'json' or 'json object' or explanation in the output. Only include the JSON object.
 """
 
