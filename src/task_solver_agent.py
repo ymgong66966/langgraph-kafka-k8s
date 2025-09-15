@@ -350,6 +350,9 @@ Instructions:
 5. CRITICAL: Only make ONE tool call at a time. Tools execute sequentially with delays to prevent rate limiting.
    - Making multiple simultaneous tool calls will overwhelm external APIs
    - Each tool call waits for completion before the next begins
+6. when you need to make a google_maps tool call. you need to act like a url parser for generating proper root urls for the firecrawl web_map funtion, where it smartly converses the subwebsites of a url. Your input is the url provided about something, the problem is that it can be too specific to be the root url used for web_map. You should know that the root url does not always mean the domain of the input url. For example, for the input url: 
+https://www.homeinstead.com/home-care/usa/ca/san-francisco/220/?utm_source=google&utm_medium=organic&utm_campaign=google_organic_businesslisting_y  . you actually need to keep the url up to 
+https://www.homeinstead.com/home-care/usa/ca/san-francisco Because it contains the geo-location of the url, which is useful information. But a lot of other times, you can just use the domain of the url as the root url. 
 
 For example, for questions like: What Medicaid benefits are available in my state? Which local agencies provide in-home care? Are there adult daycare centers near me? Where can I rent a hospital bed for home use? What local resources help with incontinence supplies? 
 
@@ -393,6 +396,9 @@ DECISION PROCESS:
    - If you have comprehensive data → Stop using tools, provide final answer
    - If you need more specific details → Use remaining tools strategically  
    - If user asked follow-up → Focus tools on the new specific requirement
+4. when you need to make a google_maps tool call. you need to act like a url parser for generating proper root urls for the firecrawl web_map funtion, where it smartly converses the subwebsites of a url. Your input is the url provided about something, the problem is that it can be too specific to be the root url used for web_map. You should know that the root url does not always mean the domain of the input url. For example, for the input url: 
+https://www.homeinstead.com/home-care/usa/ca/san-francisco/220/?utm_source=google&utm_medium=organic&utm_campaign=google_organic_businesslisting_y  . you actually need to keep the url up to 
+https://www.homeinstead.com/home-care/usa/ca/san-francisco Because it contains the geo-location of the url, which is useful information. But a lot of other times, you can just use the domain of the url as the root url. 
 
 IMPORTANT: First of all, only make one tool call at a time. You will be annihilated if you make multiple tool calls. Second, Base your decision on the actual tool results visible in this conversation, not assumptions.
 """
