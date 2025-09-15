@@ -463,7 +463,7 @@ async def task_generator_node(state: AgentState) -> dict:
                 "planner_plan": planner_plan
             })
             # Format response for chat interface (send to results topic)
-            if response.content.lower() != "no response needed":
+            if delegate_response.content.lower() != "no response needed":
                 # Prepare task data for the new format
                 task_data = {
                     "messages": messages_data,
