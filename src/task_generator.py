@@ -481,6 +481,7 @@ async def task_generator_node(state: AgentState) -> dict:
                     "messages": messages_data,
                     "user_id": user_id,
                     "user_info": user_info,
+                    "planner_plan": planner_plan
                 }
     
                 success = task_gen.send_to_kafka(task_data)
@@ -523,6 +524,7 @@ async def task_generator_node(state: AgentState) -> dict:
                     "messages": messages_data,
                     "user_id": user_id,
                     "user_info": user_info,
+                    "planner_plan": planner_plan
                 }
     
                 success = task_gen.send_to_kafka(task_data)

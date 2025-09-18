@@ -51,6 +51,7 @@ class TaskRequest(BaseModel):
     messages: List[Dict[str, Any]]  # Changed from task_name/description
     user_id: Optional[str] = None
     user_info: Optional[str] = None
+    planner_plan: Optional[str] = None
 
 class TaskSolution(BaseModel):
     task_id: str
@@ -60,6 +61,7 @@ class TaskSolution(BaseModel):
     timestamp: str
     solver_agent: str = "langgraph-mcp-task-solver"
 
+
 # MCP Agent State (copied from firecrawl_mcp_graph.py)
 class AgentState(TypedDict):
     """State for the MCP-powered LangGraph agent"""
@@ -67,6 +69,7 @@ class AgentState(TypedDict):
     user_info: str
     user_id: str
     user_question: str  # Original user question to keep context clear
+    planner_plan: str
     tool_call_count: int
     max_tool_calls: int
 
@@ -311,6 +314,7 @@ Decision:"""
         user_info = state["user_info"]
         tool_call_count = state["tool_call_count"]
         max_calls = state["max_tool_calls"]
+        planner_plan = state["planner_plan"]
         
         # Use MCP client to get tools and bind to LLM
         client = Client({
@@ -372,6 +376,13 @@ But note that typically online_scrape_multiple_websites_after_website_map tool s
 Important, you should generate your tool calls following the inputSchema of the tools. For example, if inputSchema requires an array, you have to output an array in the tool call. you will be penalized if you don't follow the inputSchema. For example, if the inputSchema is 'query': {{'items': {{'type': 'string'}}, 'title': 'Query', 'type': 'array'}}, then you need to output a list of strings in the tool call for query such as: domain: angelshomecare.com
 'query': ['dementia care', 'services for elderly', 'senior care', 'dementia support']
 
+Here is the planner plan for the most recent question in the below question history. Remember, you can use it as a mild guide, but you don't always have to follow the planner plan, you can also improvise based on the info you have:
+{planner_plan}
+
+###############
+
+Below is the chat history:
+
 """
             messages_with_system = [HumanMessage(content=system_prompt)] + messages
         else:
@@ -389,6 +400,10 @@ Available MCP Tools:
 
 CURRENT STATUS: {tool_call_count}/{max_calls} tools used, {max_calls - tool_call_count} remaining
 
+This was the planner plan for the most recent question in the below question history. Figure out where you are in the process based on the planner plan and make the proper next step. Remember, you can use it as a mild guide, but you don't always have to follow the planner plan, you can also improvise based on the info you have:
+{planner_plan}
+
+#####################
 DECISION PROCESS:
 1. **ANALYZE TOOL RESULTS**: Review the specific data gathered from previous tool calls above
 2. **ASSESS COMPLETENESS**: Do you have sufficient information to fully answer the user's question?
@@ -401,6 +416,7 @@ https://www.homeinstead.com/home-care/usa/ca/san-francisco/220/?utm_source=googl
 https://www.homeinstead.com/home-care/usa/ca/san-francisco Because it contains the geo-location of the url, which is useful information. But a lot of other times, you can just use the domain of the url as the root url. 
 
 IMPORTANT: First of all, only make one tool call at a time. You will be annihilated if you make multiple tool calls. Second, Base your decision on the actual tool results visible in this conversation, not assumptions.
+
 """
                 messages_with_system = messages + [HumanMessage(content=guidance_prompt)]
             else:
@@ -630,7 +646,7 @@ Now provide a detailed, actionable response that directly incorporates the tool 
         messages_data = task_data.get('messages', [])
         user_id = task_data.get('user_id')
         user_info = task_data.get('user_info') or None
-        
+        planner_plan = task_data.get('planner_plan') or None
         # Get user info if user_id provided but user_info is empty
         if user_id and not user_info:
             user_info = self.get_user_info(user_id)
@@ -669,6 +685,7 @@ Now provide a detailed, actionable response that directly incorporates the tool 
                 "messages": messages,
                 "user_info": user_info,
                 "user_id": user_id,
+                "planner_plan": planner_plan,
                 "user_question": user_question,  # Original user question for routing context
                 "tool_call_count": 0,
                 "max_tool_calls": self.max_tool_calls
@@ -856,7 +873,8 @@ async def solve_task_direct(task_request: TaskRequest):
         "task_id": task_request.task_id or str(uuid.uuid4()),
         "messages": task_request.messages,
         "user_id": task_request.user_id,
-        "user_info": task_request.user_info or ""
+        "user_info": task_request.user_info or "",
+        "planner_plan": task_request.planner_plan or ""
     }
     
     try:
