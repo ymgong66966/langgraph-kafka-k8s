@@ -13,6 +13,94 @@ import requests
 from kafka import KafkaProducer
 from kafka.errors import KafkaError
 from fastmcp import Client
+import boto3
+from botocore.exceptions import ClientError, NoCredentialsError
+class BedrockClient:
+    """AWS Bedrock client for Kubernetes pods with role assumption"""
+    def __init__(self):
+        self.region = 'us-east-2'
+        self.model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+        self.client = None
+        self._initialize_client()
+
+    def _initialize_client(self):
+        """Initialize Bedrock client using withcare-dev profile"""
+        try:
+            k8s_token_file = os.getenv('AWS_WEB_IDENTITY_TOKEN_FILE')
+            
+            if k8s_token_file and os.path.exists(k8s_token_file):
+                logger.info("Kubernetes environment detected, using withcare-dev role")
+                sts_client = boto3.client('sts', region_name=self.region)
+                
+                assumed_role = sts_client.assume_role(
+                    RoleArn='arn:aws:iam::216989110335:role/OrganizationAccountAccessRole',
+                    RoleSessionName='bedrock-k8s-session'
+                )
+                
+                credentials = assumed_role['Credentials']
+                
+                self.client = boto3.client(
+                    'bedrock-runtime',
+                    region_name=self.region,
+                    aws_access_key_id=credentials['AccessKeyId'],
+                    aws_secret_access_key=credentials['SecretAccessKey'],
+                    aws_session_token=credentials['SessionToken']
+                )
+                
+                logger.info("Successfully initialized Bedrock client with withcare-dev role")
+            else:
+                logger.info("Local environment detected, using withcare-dev profile")
+                session = boto3.Session(profile_name="withcare-dev", region_name=self.region)
+                self.client = session.client('bedrock-runtime')
+                logger.info("Successfully initialized Bedrock client with withcare-dev profile")
+            
+        except NoCredentialsError:
+            logger.error("No AWS credentials found. Ensure AWS profile is configured or IRSA is set up.")
+            raise
+        except ClientError as e:
+            logger.error(f"Failed to initialize Bedrock client: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error initializing Bedrock client: {e}")
+            raise
+    
+    def simple_chat(self, prompt, max_tokens=1000):
+        """Simple chat interface for single prompts"""
+        if not self.client:
+            raise RuntimeError("Bedrock client not initialized")
+        
+        try:
+            body = json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+                "top_p": 0.9
+            })
+            
+            response = self.client.invoke_model(
+                body=body,
+                modelId=self.model_id
+            )
+            
+            response_body = json.loads(response.get('body').read())
+            
+            if 'content' in response_body and len(response_body['content']) > 0:
+                return response_body['content'][0]['text']
+            else:
+                logger.error(f"Unexpected response format: {response_body}")
+                return "Error: Unexpected response format"
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'AccessDeniedException':
+                logger.error(f"Access denied to model {self.model_id}. Check model permissions.")
+            else:
+                logger.error(f"Bedrock API error: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in simple_chat: {e}")
+            raise
 # from dotenv import load_dotenv
 # load_dotenv()
 
@@ -315,17 +403,13 @@ class TaskGenerator:
     def _test_bedrock_connectivity(self):
         """Test Bedrock connectivity and log results for verification"""
         try:
-            from .bedrock_client import BedrockClient
             logger.info("🧪 BEDROCK TEST: Initializing Bedrock client...")
-            
             bedrock = BedrockClient()
             test_response = bedrock.simple_chat("Say 'Bedrock test successful' in one sentence.")
             
             logger.info(f"✅ BEDROCK TEST SUCCESS: {test_response}")
             logger.info("🎉 Claude model is accessible and working in this environment!")
             
-        except ImportError as e:
-            logger.error(f"❌ BEDROCK TEST FAILED: BedrockClient import failed - {e}")
         except Exception as e:
             logger.error(f"❌ BEDROCK TEST FAILED: {e}")
             logger.error("🚨 Claude model is NOT accessible in this environment!")
