@@ -112,6 +112,8 @@ jobs:
         aws-region: us-east-2
         role-to-assume: arn:aws:iam::909817712952:role/OrganizationAccountAccessRole
         role-session-name: GitHubActionsDeployment
+        disable-retry: true
+        role-skip-session-tagging: true
     
     - name: Update kubeconfig
       run: |
