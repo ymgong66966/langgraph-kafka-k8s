@@ -3,13 +3,6 @@ name: Build and Push Images
 on:
   push:
     branches: [ main, master ]
-    paths:
-      - 'src/**'
-      - 'docker/**'
-      - 'frontend/**'
-      - 'requirements*.txt'
-      - 'helm/**'
-      - '.github/**'
   workflow_dispatch:
 
 env:
