@@ -15,6 +15,7 @@ from kafka.errors import KafkaError
 from fastmcp import Client
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
+
 class BedrockClient:
     """AWS Bedrock client for Kubernetes pods with role assumption"""
     def __init__(self):
@@ -28,8 +29,13 @@ class BedrockClient:
         try:
             k8s_token_file = os.getenv('AWS_WEB_IDENTITY_TOKEN_FILE')
             
-            if k8s_token_file and os.path.exists(k8s_token_file):
-                logger.info("Kubernetes environment detected, using withcare-dev role")
+            # Check multiple indicators for Kubernetes environment
+            is_k8s = (k8s_token_file and os.path.exists(k8s_token_file)) or \
+                     os.path.exists('/var/run/secrets/kubernetes.io/serviceaccount/token') or \
+                     os.getenv('KUBERNETES_SERVICE_HOST')
+            
+            if is_k8s:
+                logger.info("Kubernetes environment detected, using IRSA role assumption")
                 sts_client = boto3.client('sts', region_name=self.region)
                 
                 assumed_role = sts_client.assume_role(
@@ -47,7 +53,7 @@ class BedrockClient:
                     aws_session_token=credentials['SessionToken']
                 )
                 
-                logger.info("Successfully initialized Bedrock client with withcare-dev role")
+                logger.info("Successfully initialized Bedrock client with IRSA role")
             else:
                 logger.info("Local environment detected, using withcare-dev profile")
                 session = boto3.Session(profile_name="withcare-dev", region_name=self.region)
@@ -101,6 +107,7 @@ class BedrockClient:
         except Exception as e:
             logger.error(f"Unexpected error in simple_chat: {e}")
             raise
+
 # from dotenv import load_dotenv
 # load_dotenv()
 
