@@ -45,7 +45,7 @@ fi
 echo "🔍 Checking kubectl connection..."
 if ! kubectl cluster-info &> /dev/null; then
     echo -e "${RED}❌ Error: Cannot connect to Kubernetes cluster${NC}"
-    echo "Run: aws eks update-kubeconfig --region us-east-2 --name my-small-cluster --profile personal"
+    echo "Run: aws eks update-kubeconfig --region us-east-2 --name my-small-cluster --profile withcare_dev"
     exit 1
 fi
 
