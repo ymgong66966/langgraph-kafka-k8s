@@ -309,6 +309,27 @@ class TaskGenerator:
                 acks='all'
             )
         
+        # Test Bedrock connectivity during initialization
+        self._test_bedrock_connectivity()
+    
+    def _test_bedrock_connectivity(self):
+        """Test Bedrock connectivity and log results for verification"""
+        try:
+            from bedrock_client import BedrockClient
+            logger.info("🧪 BEDROCK TEST: Initializing Bedrock client...")
+            
+            bedrock = BedrockClient()
+            test_response = bedrock.simple_chat("Say 'Bedrock test successful' in one sentence.")
+            
+            logger.info(f"✅ BEDROCK TEST SUCCESS: {test_response}")
+            logger.info("🎉 Claude model is accessible and working in this environment!")
+            
+        except ImportError as e:
+            logger.error(f"❌ BEDROCK TEST FAILED: BedrockClient import failed - {e}")
+        except Exception as e:
+            logger.error(f"❌ BEDROCK TEST FAILED: {e}")
+            logger.error("🚨 Claude model is NOT accessible in this environment!")
+
     def send_to_kafka(self, task_data: dict) -> bool:
         if self.mock == True:
             return True
