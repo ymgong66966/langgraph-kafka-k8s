@@ -315,7 +315,7 @@ class TaskGenerator:
     def _test_bedrock_connectivity(self):
         """Test Bedrock connectivity and log results for verification"""
         try:
-            from bedrock_client import BedrockClient
+            from .bedrock_client import BedrockClient
             logger.info("🧪 BEDROCK TEST: Initializing Bedrock client...")
             
             bedrock = BedrockClient()
