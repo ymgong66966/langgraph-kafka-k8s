@@ -24,35 +24,40 @@ class BedrockClient:
             k8s_token_file = os.getenv('AWS_WEB_IDENTITY_TOKEN_FILE')
             
             if k8s_token_file and os.path.exists(k8s_token_file):
-                # Kubernetes environment - use withcare-dev role ARN directly
-                logger.info("Kubernetes environment detected, using withcare-dev role")
-                sts_client = boto3.client('sts', region_name=self.region)
-                
-                # Assume the withcare-dev role (OrganizationAccountAccessRole in account 216989110335)
-                assumed_role = sts_client.assume_role(
-                    RoleArn='arn:aws:iam::216989110335:role/OrganizationAccountAccessRole',
-                    RoleSessionName='bedrock-k8s-session'
-                )
-                
-                # Extract credentials from the assumed role
-                credentials = assumed_role['Credentials']
-                
-                # Create Bedrock client with assumed role credentials
-                self.client = boto3.client(
-                    'bedrock-runtime',
-                    region_name=self.region,
-                    aws_access_key_id=credentials['AccessKeyId'],
-                    aws_secret_access_key=credentials['SecretAccessKey'],
-                    aws_session_token=credentials['SessionToken']
-                )
-                
-                logger.info("Successfully initialized Bedrock client with withcare-dev role")
+                # Kubernetes environment - attempt IRSA role assumption
+                logger.info("Kubernetes environment detected, attempting IRSA role assumption")
+                try:
+                    sts_client = boto3.client('sts', region_name=self.region)
+
+                    # Assume the role (OrganizationAccountAccessRole in account 216989110335)
+                    assumed_role = sts_client.assume_role(
+                        RoleArn='arn:aws:iam::216989110335:role/OrganizationAccountAccessRole',
+                        RoleSessionName='bedrock-k8s-session'
+                    )
+
+                    # Extract credentials from the assumed role
+                    credentials = assumed_role['Credentials']
+
+                    # Create Bedrock client with assumed role credentials
+                    self.client = boto3.client(
+                        'bedrock-runtime',
+                        region_name=self.region,
+                        aws_access_key_id=credentials['AccessKeyId'],
+                        aws_secret_access_key=credentials['SecretAccessKey'],
+                        aws_session_token=credentials['SessionToken']
+                    )
+
+                    logger.info("Successfully initialized Bedrock client with assumed role")
+                except Exception as irsa_error:
+                    logger.warning(f"IRSA role assumption failed: {irsa_error}")
+                    logger.info("Falling back to default AWS credentials")
+                    self.client = boto3.client('bedrock-runtime', region_name=self.region)
+                    logger.info("Successfully initialized Bedrock client with default credentials")
             else:
-                # Local environment - use withcare-dev profile directly
-                logger.info("Local environment detected, using withcare-dev profile")
-                session = boto3.Session(profile_name="withcare-dev", region_name=self.region)
-                self.client = session.client('bedrock-runtime')
-                logger.info("Successfully initialized Bedrock client with withcare-dev profile")
+                # Local environment - use default AWS credentials
+                logger.info("Local environment detected, using default AWS credentials")
+                self.client = boto3.client('bedrock-runtime', region_name=self.region)
+                logger.info("Successfully initialized Bedrock client with default credentials")
             
         except NoCredentialsError:
             logger.error("No AWS credentials found. Ensure AWS profile is configured or IRSA is set up.")
