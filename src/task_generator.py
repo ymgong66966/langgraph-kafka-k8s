@@ -2,6 +2,8 @@ import os
 import json
 import logging
 import uuid
+import time
+import random
 from datetime import datetime
 from typing import List, Dict, Any, Optional, TypedDict
 # from langchain.prompts import PromptTemplate  # No longer needed - using direct string formatting
@@ -75,12 +77,39 @@ class BedrockClient:
             logger.error(f"Unexpected error initializing Bedrock client: {e}")
             raise
     
+    def _retry_with_backoff(self, func, max_retries=5, base_delay=1.0, max_delay=60.0, backoff_factor=2.0):
+        """Retry function with exponential backoff for throttling"""
+        for attempt in range(max_retries):
+            try:
+                return func()
+            except ClientError as e:
+                error_code = e.response['Error']['Code']
+                
+                if error_code == 'ThrottlingException' and attempt < max_retries - 1:
+                    # Calculate delay with jitter
+                    delay = min(base_delay * (backoff_factor ** attempt), max_delay)
+                    jitter = random.uniform(0.1, 0.3) * delay
+                    total_delay = delay + jitter
+                    
+                    logger.warning(f"Throttling detected, retrying in {total_delay:.2f}s (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(total_delay)
+                    continue
+                else:
+                    # Re-raise for non-throttling errors or final attempt
+                    raise
+            except Exception as e:
+                # Re-raise non-ClientError exceptions immediately
+                raise
+        
+        # This should never be reached, but just in case
+        raise Exception(f"Max retries ({max_retries}) exceeded")
+
     def converse(self, messages, max_tokens=1000, temperature=0.2, top_p=0.9):
-        """Send messages to Bedrock model and get response using invoke_model API"""
+        """Send messages to Bedrock model and get response using invoke_model API with retry logic"""
         if not self.client:
             raise RuntimeError("Bedrock client not initialized")
 
-        try:
+        def _make_request():
             # Format messages for Bedrock invoke_model API (following AWS docs)
             bedrock_messages = []
             for msg in messages:
@@ -114,10 +143,12 @@ class BedrockClient:
                 logger.error(f"Unexpected response format: {response_body}")
                 return "Error: Unexpected response format"
 
+        try:
+            return self._retry_with_backoff(_make_request)
         except ClientError as e:
             error_code = e.response['Error']['Code']
             if error_code == 'AccessDeniedException':
-                logger.error(f"Access denied to model {self.model_id}. Check model permissions.")
+                logger.error(f"Access denied to Bedrock model {self.model_id}: {e}")
             else:
                 logger.error(f"Bedrock API error: {e}")
             raise
@@ -639,7 +670,7 @@ class TaskGenerator:
             )
         
         # Test Bedrock connectivity during initialization
-        self._test_bedrock_connectivity()
+        # self._test_bedrock_connectivity()
 
     def _test_bedrock_connectivity(self):
         """Test Bedrock connectivity and log results for verification"""
