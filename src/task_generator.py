@@ -200,7 +200,7 @@ class TrackedBedrockClient(BedrockClient):
     def simple_chat(self, prompt, max_tokens=1000, **kwargs):
         """Simple chat with Langfuse logging"""
         # Create a generation trace (using working pattern from example)
-        generation = langfuse.generation(
+        generations = langfuse.generation(
             name=f"bedrock-{self.agent_role}-simple-chat",
             model=self.model_id,
             input=prompt,
@@ -227,7 +227,7 @@ class TrackedBedrockClient(BedrockClient):
             output_tokens = len(response.split()) * 1.3
 
             # Update the generation with response
-            generation.end(
+            generations.end(
                 output=response,
                 usage={
                     "input": int(input_tokens),
@@ -245,7 +245,7 @@ class TrackedBedrockClient(BedrockClient):
 
         except Exception as e:
             # Log the error
-            generation.end(
+            generations.end(
                 level="ERROR",
                 metadata={"error": str(e)}
             )
@@ -254,7 +254,7 @@ class TrackedBedrockClient(BedrockClient):
     async def async_chat(self, prompt, max_tokens=1000, temperature=0.2, **kwargs):
         """Async chat with Langfuse logging"""
         # Create a generation trace (using working pattern from example)
-        generation = langfuse.generation(
+        generations = langfuse.generation(
             name=f"bedrock-{self.agent_role}-async-chat",
             model=self.model_id,
             input=prompt,
@@ -282,7 +282,7 @@ class TrackedBedrockClient(BedrockClient):
             output_tokens = len(response.split()) * 1.3
 
             # Update the generation with response
-            generation.end(
+            generations.end(
                 output=response,
                 usage={
                     "input": int(input_tokens),
@@ -301,7 +301,7 @@ class TrackedBedrockClient(BedrockClient):
 
         except Exception as e:
             # Log the error
-            generation.end(
+            generations.end(
                 level="ERROR",
                 metadata={"error": str(e)}
             )
