@@ -1,5 +1,5 @@
 # Langfuse for LLM observability and tracking
-langfuse>=2.0.0
+langfuse==2.60.5
 
 # Core dependencies (if not already installed)
 # boto3>=1.34.0

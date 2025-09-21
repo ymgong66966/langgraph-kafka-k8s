@@ -148,14 +148,32 @@ class BedrockClient:
 
 
 
-# # Set the project for all traces
-# def create_langfuse_with_project(project_name="test_graph"):
-#     """Create Langfuse client configured for specific project"""
-#     return Langfuse(
-#         public_key=LANGFUSE_PUBLIC_KEY,
-#         secret_key=LANGFUSE_SECRET_KEY,
-#         host=LANGFUSE_HOST
-#     )
+# Configure Langfuse
+from langfuse import Langfuse
+
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
+LANGFUSE_HOST = os.getenv("LANGFUSE_HOST")
+
+# Initialize Langfuse client
+try:
+    if LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY and LANGFUSE_HOST:
+        langfuse = Langfuse(
+            public_key=LANGFUSE_PUBLIC_KEY,
+            secret_key=LANGFUSE_SECRET_KEY,
+            host=LANGFUSE_HOST
+        )
+        logger.info(f"✅ Langfuse client initialized successfully. Host: {LANGFUSE_HOST}")
+        logger.info(f"Langfuse client: {LANGFUSE_PUBLIC_KEY}, {LANGFUSE_SECRET_KEY}, {LANGFUSE_HOST}")
+    else:
+        logger.warning(f"❌ Langfuse environment variables not set properly:")
+        logger.warning(f"  LANGFUSE_PUBLIC_KEY: {'✅ set' if LANGFUSE_PUBLIC_KEY else '❌ missing'}")
+        logger.warning(f"  LANGFUSE_SECRET_KEY: {'✅ set' if LANGFUSE_SECRET_KEY else '❌ missing'}")
+        logger.warning(f"  LANGFUSE_HOST: {'✅ set' if LANGFUSE_HOST else '❌ missing'}")
+        langfuse = None
+except Exception as e:
+    logger.error(f"❌ Failed to initialize Langfuse client: {e}")
+    langfuse = None
 
 class TrackedBedrockClient(BedrockClient):
     """BedrockClient with Langfuse tracking"""
@@ -165,56 +183,30 @@ class TrackedBedrockClient(BedrockClient):
         self.session_id = session_id or f"bedrock-session-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         self.agent_role = agent_role or "unknown-agent"
         self.user_id = user_id or "anonymous"
-        import json
-        import os
-        from datetime import datetime
-        from langfuse import Langfuse
-
-        # Configure Langfuse
-        # You can get these from https://cloud.langfuse.com or your self-hosted instance
-        LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
-        LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
-        LANGFUSE_HOST = os.getenv("LANGFUSE_HOST")
-
-        # Initialize Langfuse client with specific project
-        try:
-            if LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY and LANGFUSE_HOST:
-                self.langfuse_api = Langfuse(
-                    public_key=LANGFUSE_PUBLIC_KEY,
-                    secret_key=LANGFUSE_SECRET_KEY,
-                    host=LANGFUSE_HOST
-                )
-                logger.info(f"✅ Langfuse client initialized successfully. Host: {LANGFUSE_HOST}")
-                logger.info(f"Langfuse client: {LANGFUSE_PUBLIC_KEY}, {LANGFUSE_SECRET_KEY}, {LANGFUSE_HOST}")
-                logger.info(f"Langfuse client methods: {[method for method in dir(langfuse) if not method.startswith('_')]}")
-            else:
-                logger.warning(f"❌ Langfuse environment variables not set properly:")
-                logger.warning(f"  LANGFUSE_PUBLIC_KEY: {'✅ set' if LANGFUSE_PUBLIC_KEY else '❌ missing'}")
-                logger.warning(f"  LANGFUSE_SECRET_KEY: {'✅ set' if LANGFUSE_SECRET_KEY else '❌ missing'}")
-                logger.warning(f"  LANGFUSE_HOST: {'✅ set' if LANGFUSE_HOST else '❌ missing'}")
-                self.langfuse_api = None
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize Langfuse client: {e}")
-            self.langfuse_api = None
 
     def simple_chat(self, prompt, max_tokens=1000, **kwargs):
         """Simple chat with Langfuse logging"""
-        # Create a generation trace (using working pattern from example)
-        generations = self.langfuse_api.generation(
-            name=f"bedrock-{self.agent_role}-simple-chat",
-            model=self.model_id,
-            input=prompt,
-            session_id=self.session_id,
-            user_id=self.user_id,
-            project="test_graph",
-            metadata={
-                "max_tokens": max_tokens,
-                "region": self.region,
-                "system": "langgraph-kafka",
-                "component": "task-generator",
-                **kwargs
-            }
-        )
+        # Create a generation trace with error handling
+        generation = None
+        if langfuse:
+            try:
+                generation = langfuse.generation(
+                    name=f"bedrock-{self.agent_role}-simple-chat",
+                    model=self.model_id,
+                    input=prompt,
+                    session_id=self.session_id,
+                    user_id=self.user_id,
+                    metadata={
+                        "max_tokens": max_tokens,
+                        "region": self.region,
+                        "system": "langgraph-kafka",
+                        "component": "task-generator",
+                        **kwargs
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create Langfuse generation: {e}")
+                generation = None
 
         try:
             # Call the original method
@@ -227,49 +219,61 @@ class TrackedBedrockClient(BedrockClient):
             output_tokens = len(response.split()) * 1.3
 
             # Update the generation with response
-            generations.end(
-                output=response,
-                usage={
-                    "input": int(input_tokens),
-                    "output": int(output_tokens),
-                    "total": int(input_tokens + output_tokens)
-                },
-                level="DEFAULT",
-                metadata={
-                    "duration_ms": int((end_time - start_time).total_seconds() * 1000),
-                    "model": self.model_id
-                }
-            )
+            if generation:
+                try:
+                    generation.end(
+                        output=response,
+                        usage={
+                            "input": int(input_tokens),
+                            "output": int(output_tokens),
+                            "total": int(input_tokens + output_tokens)
+                        },
+                        metadata={
+                            "duration_ms": int((end_time - start_time).total_seconds() * 1000),
+                            "model": self.model_id
+                        }
+                    )
+                except Exception as langfuse_error:
+                    logger.warning(f"Failed to end Langfuse generation: {langfuse_error}")
 
             return response
 
         except Exception as e:
             # Log the error
-            generations.end(
-                level="ERROR",
-                metadata={"error": str(e)}
-            )
+            if generation:
+                try:
+                    generation.end(
+                        level="ERROR",
+                        metadata={"error": str(e)}
+                    )
+                except Exception as langfuse_error:
+                    logger.warning(f"Failed to log error to Langfuse: {langfuse_error}")
             raise
 
     async def async_chat(self, prompt, max_tokens=1000, temperature=0.2, **kwargs):
         """Async chat with Langfuse logging"""
-        # Create a generation trace (using working pattern from example)
-        generations = self.langfuse_api.generation(
-            name=f"bedrock-{self.agent_role}-async-chat",
-            model=self.model_id,
-            input=prompt,
-            session_id=self.session_id,
-            user_id=self.user_id,
-            project="test_graph",
-            metadata={
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "region": self.region,
-                "system": "langgraph-kafka",
-                "component": "task-generator",
-                **kwargs
-            }
-        )
+        # Create a generation trace with error handling
+        generation = None
+        if langfuse:
+            try:
+                generation = langfuse.generation(
+                    name=f"bedrock-{self.agent_role}-async-chat",
+                    model=self.model_id,
+                    input=prompt,
+                    session_id=self.session_id,
+                    user_id=self.user_id,
+                    metadata={
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                        "region": self.region,
+                        "system": "langgraph-kafka",
+                        "component": "task-generator",
+                        **kwargs
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create Langfuse generation: {e}")
+                generation = None
 
         try:
             # Call the original method
@@ -282,29 +286,36 @@ class TrackedBedrockClient(BedrockClient):
             output_tokens = len(response.split()) * 1.3
 
             # Update the generation with response
-            generations.end(
-                output=response,
-                usage={
-                    "input": int(input_tokens),
-                    "output": int(output_tokens),
-                    "total": int(input_tokens + output_tokens)
-                },
-                level="DEFAULT",
-                metadata={
-                    "duration_ms": int((end_time - start_time).total_seconds() * 1000),
-                    "temperature": temperature,
-                    "model": self.model_id
-                }
-            )
+            if generation:
+                try:
+                    generation.end(
+                        output=response,
+                        usage={
+                            "input": int(input_tokens),
+                            "output": int(output_tokens),
+                            "total": int(input_tokens + output_tokens)
+                        },
+                        metadata={
+                            "duration_ms": int((end_time - start_time).total_seconds() * 1000),
+                            "temperature": temperature,
+                            "model": self.model_id
+                        }
+                    )
+                except Exception as langfuse_error:
+                    logger.warning(f"Failed to end Langfuse generation: {langfuse_error}")
 
             return response
 
         except Exception as e:
             # Log the error
-            generations.end(
-                level="ERROR",
-                metadata={"error": str(e)}
-            )
+            if generation:
+                try:
+                    generation.end(
+                        level="ERROR",
+                        metadata={"error": str(e)}
+                    )
+                except Exception as langfuse_error:
+                    logger.warning(f"Failed to log error to Langfuse: {langfuse_error}")
             raise
 
 def create_conversation_trace(user_id: str = "anonymous", conversation_type: str = "task-generation"):
