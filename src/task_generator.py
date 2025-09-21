@@ -185,20 +185,25 @@ class TrackedBedrockClient(BedrockClient):
 
     def simple_chat(self, prompt, max_tokens=1000, **kwargs):
         """Simple chat with Langfuse logging"""
-        # Create a generation trace
-        generation = langfuse.generation(
-            name=f"bedrock-{self.agent_role}-chat",
+        # Create a trace and generation
+        trace = langfuse.trace(
+            name="task-generator-conversation",
+            user_id=self.user_id,
+            session_id=self.session_id,
+            project="test_graph",
+            metadata={
+                "system": "langgraph-kafka",
+                "component": "task-generator"
+            }
+        )
+
+        generation = trace.generation(
+            name=f"bedrock-{self.agent_role}-simple-chat",
             model=self.model_id,
             input=prompt,
-            session_id=self.session_id,
-            user_id=self.user_id,
-            project="langgraph-kafka-task-generator",
             metadata={
                 "max_tokens": max_tokens,
                 "region": self.region,
-                "agent_role": self.agent_role,
-                "system": "langgraph-kafka",
-                "component": "task-generator",
                 **kwargs
             }
         )
@@ -240,21 +245,26 @@ class TrackedBedrockClient(BedrockClient):
 
     async def async_chat(self, prompt, max_tokens=1000, temperature=0.2, **kwargs):
         """Async chat with Langfuse logging"""
-        # Create a generation trace
-        generation = langfuse.generation(
+        # Create a trace and generation
+        trace = langfuse.trace(
+            name="task-generator-conversation",
+            user_id=self.user_id,
+            session_id=self.session_id,
+            project="test_graph",
+            metadata={
+                "system": "langgraph-kafka",
+                "component": "task-generator"
+            }
+        )
+
+        generation = trace.generation(
             name=f"bedrock-{self.agent_role}-async-chat",
             model=self.model_id,
             input=prompt,
-            session_id=self.session_id,
-            user_id=self.user_id,
-            project="langgraph-kafka-task-generator",
             metadata={
                 "max_tokens": max_tokens,
                 "temperature": temperature,
                 "region": self.region,
-                "agent_role": self.agent_role,
-                "system": "langgraph-kafka",
-                "component": "task-generator",
                 **kwargs
             }
         )
