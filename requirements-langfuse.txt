@@ -1,0 +1,7 @@
+# Langfuse for LLM observability and tracking
+langfuse>=2.0.0
+
+# Core dependencies (if not already installed)
+# boto3>=1.34.0
+# requests>=2.31.0
+# asyncio (built-in)

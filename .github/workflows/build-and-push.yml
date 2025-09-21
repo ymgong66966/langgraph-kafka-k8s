@@ -194,6 +194,9 @@ jobs:
           --set env.langchainEndpoint="https://api.smith.langchain.com" \
           --set env.langchainApiKey="${{ secrets.LANGCHAIN_API_KEY }}" \
           --set env.langsmithApiKey="${{ secrets.LANGSMITH_API_KEY }}" \
+          --set env.langfusePublicKey="${{ secrets.LANGFUSE_PUBLIC_KEY }}" \
+          --set env.langfuseSecretKey="${{ secrets.LANGFUSE_SECRET_KEY }}" \
+          --set env.langfuseHost="${{ secrets.LANGFUSE_HOST }}" \
           --set env.kafkaBootstrapServers="langgraph-system-kafka.langgraph-system.svc.cluster.local:9092" \
           --set env.kafkaTopic="dev-langgraph-agent-events" \
           --set env.kafkaResultsTopic="dev-langgraph-task-results" \

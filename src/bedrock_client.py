@@ -56,7 +56,8 @@ class BedrockClient:
             else:
                 # Local environment - use default AWS credentials
                 logger.info("Local environment detected, using default AWS credentials")
-                self.client = boto3.client('bedrock-runtime', region_name=self.region)
+                session = boto3.Session(profile_name="withcare_dev", region_name="us-east-2")
+                self.client = session.client("bedrock-runtime")
                 logger.info("Successfully initialized Bedrock client with default credentials")
             
         except NoCredentialsError:
@@ -133,16 +134,51 @@ class BedrockClient:
     def simple_chat(self, prompt, max_tokens=1000):
         """
         Simple chat interface for single prompts
-        
+
         Args:
             prompt: User prompt string
             max_tokens: Maximum tokens to generate
-            
+
         Returns:
             Response text from the model
         """
         messages = [{"role": "user", "content": prompt}]
         return self.converse(messages, max_tokens=max_tokens)
+
+    async def async_chat(self, prompt, max_tokens=1000, temperature=0.2):
+        """
+        Async chat interface for single prompts (compatible with LangChain patterns)
+
+        Args:
+            prompt: User prompt string
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+
+        Returns:
+            Response text from the model
+        """
+        messages = [{"role": "user", "content": prompt}]
+        # Run synchronous converse in async context
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: self.converse(messages, max_tokens=max_tokens, temperature=temperature))
+
+    async def async_converse(self, messages, max_tokens=1000, temperature=0.2, top_p=0.9):
+        """
+        Async converse interface for multiple messages (compatible with LangChain patterns)
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+            top_p: Top-p sampling parameter
+
+        Returns:
+            Response text from the model
+        """
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: self.converse(messages, max_tokens=max_tokens, temperature=temperature, top_p=top_p))
 
 # Example usage for testing
 if __name__ == "__main__":

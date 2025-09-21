@@ -4,8 +4,8 @@ import logging
 import uuid
 from datetime import datetime
 from typing import List, Dict, Any, Optional, TypedDict
-from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
+# from langchain.prompts import PromptTemplate  # No longer needed - using direct string formatting
+# from langchain_openai import ChatOpenAI  # Replaced with BedrockClient
 from langgraph.graph import END, StateGraph, START
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
@@ -75,33 +75,45 @@ class BedrockClient:
             logger.error(f"Unexpected error initializing Bedrock client: {e}")
             raise
     
-    def simple_chat(self, prompt, max_tokens=1000):
-        """Simple chat interface for single prompts"""
+    def converse(self, messages, max_tokens=1000, temperature=0.2, top_p=0.9):
+        """Send messages to Bedrock model and get response using invoke_model API"""
         if not self.client:
             raise RuntimeError("Bedrock client not initialized")
-        
+
         try:
+            # Format messages for Bedrock invoke_model API (following AWS docs)
+            bedrock_messages = []
+            for msg in messages:
+                bedrock_messages.append({
+                    "role": msg["role"],
+                    "content": msg["content"]  # Simple string format, not array
+                })
+
+            # Create request body following AWS documentation format
             body = json.dumps({
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": max_tokens,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "top_p": 0.9
+                "messages": bedrock_messages,
+                "temperature": temperature,
+                "top_p": top_p
             })
-            
+
+            # Use invoke_model instead of converse
             response = self.client.invoke_model(
                 body=body,
                 modelId=self.model_id
             )
-            
+
+            # Parse response body
             response_body = json.loads(response.get('body').read())
-            
+
+            # Extract text from response (Claude format)
             if 'content' in response_body and len(response_body['content']) > 0:
                 return response_body['content'][0]['text']
             else:
                 logger.error(f"Unexpected response format: {response_body}")
                 return "Error: Unexpected response format"
-            
+
         except ClientError as e:
             error_code = e.response['Error']['Code']
             if error_code == 'AccessDeniedException':
@@ -110,8 +122,198 @@ class BedrockClient:
                 logger.error(f"Bedrock API error: {e}")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in simple_chat: {e}")
+            logger.error(f"Unexpected error in converse: {e}")
             raise
+
+    def simple_chat(self, prompt, max_tokens=1000):
+        """Simple chat interface for single prompts"""
+        messages = [{"role": "user", "content": prompt}]
+        return self.converse(messages, max_tokens=max_tokens)
+
+    async def async_chat(self, prompt, max_tokens=1000, temperature=0.2):
+        """Async chat interface for single prompts (compatible with LangChain patterns)"""
+        messages = [{"role": "user", "content": prompt}]
+        # Run synchronous converse in async context
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: self.converse(messages, max_tokens=max_tokens, temperature=temperature))
+
+    async def async_converse(self, messages, max_tokens=1000, temperature=0.2, top_p=0.9):
+        """Async converse interface for multiple messages (compatible with LangChain patterns)"""
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: self.converse(messages, max_tokens=max_tokens, temperature=temperature, top_p=top_p))
+
+
+
+
+import json
+import os
+from datetime import datetime
+from langfuse import Langfuse
+
+# Configure Langfuse
+# You can get these from https://cloud.langfuse.com or your self-hosted instance
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
+LANGFUSE_HOST = os.getenv("LANGFUSE_HOST")
+
+# Initialize Langfuse client with specific project
+langfuse = Langfuse(
+    public_key=LANGFUSE_PUBLIC_KEY,
+    secret_key=LANGFUSE_SECRET_KEY,
+    host=LANGFUSE_HOST
+)
+
+# Set the project for all traces
+def create_langfuse_with_project(project_name="test_graph"):
+    """Create Langfuse client configured for specific project"""
+    return Langfuse(
+        public_key=LANGFUSE_PUBLIC_KEY,
+        secret_key=LANGFUSE_SECRET_KEY,
+        host=LANGFUSE_HOST
+    )
+
+class TrackedBedrockClient(BedrockClient):
+    """BedrockClient with Langfuse tracking"""
+
+    def __init__(self, session_id: str = None, agent_role: str = None, user_id: str = None):
+        super().__init__()
+        self.session_id = session_id or f"bedrock-session-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        self.agent_role = agent_role or "unknown-agent"
+        self.user_id = user_id or "anonymous"
+
+    def simple_chat(self, prompt, max_tokens=1000, **kwargs):
+        """Simple chat with Langfuse logging"""
+        # Create a generation trace
+        generation = langfuse.generation(
+            name=f"bedrock-{self.agent_role}-chat",
+            model=self.model_id,
+            input=prompt,
+            session_id=self.session_id,
+            user_id=self.user_id,
+            project="langgraph-kafka-task-generator",
+            metadata={
+                "max_tokens": max_tokens,
+                "region": self.region,
+                "agent_role": self.agent_role,
+                "system": "langgraph-kafka",
+                "component": "task-generator",
+                **kwargs
+            }
+        )
+
+        try:
+            # Call the original method
+            start_time = datetime.now()
+            response = super().simple_chat(prompt, max_tokens, **kwargs)
+            end_time = datetime.now()
+
+            # Calculate approximate token counts (rough estimation)
+            input_tokens = len(prompt.split()) * 1.3  # Rough approximation
+            output_tokens = len(response.split()) * 1.3
+
+            # Update the generation with response
+            generation.end(
+                output=response,
+                usage={
+                    "input": int(input_tokens),
+                    "output": int(output_tokens),
+                    "total": int(input_tokens + output_tokens)
+                },
+                level="DEFAULT",
+                metadata={
+                    "duration_ms": int((end_time - start_time).total_seconds() * 1000),
+                    "model": self.model_id
+                }
+            )
+
+            return response
+
+        except Exception as e:
+            # Log the error
+            generation.end(
+                level="ERROR",
+                metadata={"error": str(e)}
+            )
+            raise
+
+    async def async_chat(self, prompt, max_tokens=1000, temperature=0.2, **kwargs):
+        """Async chat with Langfuse logging"""
+        # Create a generation trace
+        generation = langfuse.generation(
+            name=f"bedrock-{self.agent_role}-async-chat",
+            model=self.model_id,
+            input=prompt,
+            session_id=self.session_id,
+            user_id=self.user_id,
+            project="langgraph-kafka-task-generator",
+            metadata={
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "region": self.region,
+                "agent_role": self.agent_role,
+                "system": "langgraph-kafka",
+                "component": "task-generator",
+                **kwargs
+            }
+        )
+
+        try:
+            # Call the original method
+            start_time = datetime.now()
+            response = await super().async_chat(prompt, max_tokens, temperature)
+            end_time = datetime.now()
+
+            # Calculate approximate token counts
+            input_tokens = len(prompt.split()) * 1.3
+            output_tokens = len(response.split()) * 1.3
+
+            # Update the generation with response
+            generation.end(
+                output=response,
+                usage={
+                    "input": int(input_tokens),
+                    "output": int(output_tokens),
+                    "total": int(input_tokens + output_tokens)
+                },
+                level="DEFAULT",
+                metadata={
+                    "duration_ms": int((end_time - start_time).total_seconds() * 1000),
+                    "temperature": temperature,
+                    "model": self.model_id
+                }
+            )
+
+            return response
+
+        except Exception as e:
+            # Log the error
+            generation.end(
+                level="ERROR",
+                metadata={"error": str(e)}
+            )
+            raise
+
+def create_conversation_trace(user_id: str = "anonymous", conversation_type: str = "task-generation"):
+    """Create a conversation-level trace for grouping related calls"""
+    session_id = f"conversation-{user_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    trace = langfuse.trace(
+        name=f"langgraph-{conversation_type}",
+        user_id=user_id,
+        session_id=session_id,
+        project="langgraph-kafka-task-generator",
+        metadata={
+            "system": "langgraph-kafka",
+            "component": "task-generator",
+            "conversation_type": conversation_type,
+            "timestamp": datetime.now().isoformat()
+        }
+    )
+    return trace, session_id
+
+
+
 
 # from dotenv import load_dotenv
 # load_dotenv()
@@ -129,7 +331,7 @@ logger = logging.getLogger(__name__)
 KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka-service:9092')
 KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'dev-langgraph-agent-events')
 KAFKA_RESULTS_TOPIC = os.getenv('KAFKA_RESULTS_TOPIC', 'dev-langgraph-task-results')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')  # No longer needed - using BedrockClient instead
 ROUTER_AGENT_PROMPT = """
 You are a router agent that determines which agent to use based on the user's input. Here is the chat history: {chat_history}. 
 
@@ -411,17 +613,21 @@ class TaskGenerator:
         
         # Test Bedrock connectivity during initialization
         self._test_bedrock_connectivity()
-    
+
     def _test_bedrock_connectivity(self):
         """Test Bedrock connectivity and log results for verification"""
         try:
-            logger.info("🧪 BEDROCK TEST: Initializing Bedrock client...")
-            bedrock = BedrockClient()
+            logger.info("🧪 BEDROCK TEST: Initializing TrackedBedrockClient...")
+            bedrock = TrackedBedrockClient(
+                session_id="bedrock-connectivity-test",
+                agent_role="connectivity-test",
+                user_id="system"
+            )
             test_response = bedrock.simple_chat("Say 'Bedrock test successful' in one sentence.")
-            
+
             logger.info(f"✅ BEDROCK TEST SUCCESS: {test_response}")
-            logger.info("🎉 Claude model is accessible and working in this environment!")
-            
+            logger.info("🎉 Claude model is accessible and working with Langfuse tracking!")
+
         except Exception as e:
             logger.error(f"❌ BEDROCK TEST FAILED: {e}")
             logger.error("🚨 Claude model is NOT accessible in this environment!")
@@ -534,7 +740,7 @@ async def task_generator_node(state: AgentState) -> dict:
     
             
     # NEW: Generate conversational response after delegation
-    if not state.get('mock', False) and OPENAI_API_KEY:
+    if not state.get('mock', False):
         # Convert messages to chat history string
         chat_history = ""
         for msg in messages:
@@ -543,11 +749,11 @@ async def task_generator_node(state: AgentState) -> dict:
             elif isinstance(msg, AIMessage):
                 chat_history += f"Assistant: {msg.content}\n"
         
-        # Use GPT-4o for delegation response
-        llm = ChatOpenAI(
-            temperature=0.1,
-            api_key=OPENAI_API_KEY,
-            model="gpt-4.1"
+        # Use Claude 4 Sonnet via TrackedBedrockClient for delegation response with Langfuse tracking
+        bedrock_client = TrackedBedrockClient(
+            session_id=f"task-gen-{user_id or 'anonymous'}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+            agent_role="task-generator",
+            user_id=user_id or "anonymous"
         )
         mcp_server_url = "http://a7a09ec61615e46a7892d050e514c11e-1977986439.us-east-2.elb.amazonaws.com/mcp"
         client = Client({
@@ -567,32 +773,31 @@ async def task_generator_node(state: AgentState) -> dict:
                 tool_information_nice_print += f"Output Schema: {tool.outputSchema}\n"
                 tool_information_nice_print += "\n"
 
-        prompt = PromptTemplate.from_template(PLANNER_PROMPT)
-        chain = prompt | llm
         user_question = messages[-1].content
         try:
-            # Generate delegation acknowledgment response
-            response = await chain.ainvoke({
-                "chat_history": chat_history,
-                "user_info": user_info,
-                "user_question": user_question,
-                "mcp_tool_context": tool_information_nice_print
-            })
-            planner_plan = response.content
-            logger.info(f"Delegation response generated: {response.content[:100]}...")
+            # Generate planner response using Bedrock
+            planner_prompt = PLANNER_PROMPT.format(
+                chat_history=chat_history,
+                user_info=user_info,
+                user_question=user_question,
+                mcp_tool_context=tool_information_nice_print
+            )
+            planner_plan = await bedrock_client.async_chat(planner_prompt, max_tokens=2000, temperature=0.1)
+            logger.info(f"Planner response generated: {planner_plan[:100]}...")
+
             # Generate task_id for this delegation response
             delegation_task_id = str(uuid.uuid4())
-            delegate_prompt = PromptTemplate.from_template(TASK_DELEGATION_PROMPT)
-            delegate_chain = delegate_prompt | llm
 
-            delegate_response = await delegate_chain.ainvoke({
-                "chat_history": chat_history,
-                "user_info": user_info,
-                "user_question": user_question,
-                "planner_plan": planner_plan
-            })
+            # Generate delegation response using Bedrock
+            delegation_prompt = TASK_DELEGATION_PROMPT.format(
+                chat_history=chat_history,
+                user_info=user_info,
+                user_question=user_question,
+                planner_plan=planner_plan
+            )
+            delegate_response_content = await bedrock_client.async_chat(delegation_prompt, max_tokens=1000, temperature=0.1)
             # Format response for chat interface (send to results topic)
-            if delegate_response.content.lower() != "no response needed":
+            if delegate_response_content.lower() != "no response needed":
                 # Prepare task data for the new format
                 task_data = {
                     "messages": messages_data,
@@ -608,7 +813,7 @@ async def task_generator_node(state: AgentState) -> dict:
                 else:
                     logger.error("Failed to send task to Kafka")
                 filler_response = {
-                    "content": delegate_response.content,
+                    "content": delegate_response_content,
                     "source": "task-generator-delegation",
                     "task_id": delegation_task_id,
                     "type": "delegation_response",
@@ -653,7 +858,7 @@ async def task_generator_node(state: AgentState) -> dict:
                 return {
                     "processed_data": {
                         **task_data,
-                        "delegation_response": response.content,
+                        "delegation_response": planner_plan,
                         "delegation_task_id": delegation_task_id,
                         "delegation_sent": True
                     }
@@ -666,11 +871,7 @@ async def task_generator_node(state: AgentState) -> dict:
 async def router_node(state: AgentState) -> dict:
     """Router node to determine which agent to use"""
     messages = state.get('messages', [])
-    
-    if not OPENAI_API_KEY:
-        logger.error("OpenAI API key not configured")
-        return {"agent": "frontend_agent"}  # Default fallback
-    
+
     # Convert messages to chat history string
     chat_history = ""
     logger.info(f"Router received {len(messages)} messages")
@@ -681,36 +882,36 @@ async def router_node(state: AgentState) -> dict:
         elif isinstance(msg, AIMessage):
             chat_history += f"Assistant: {msg.content}\n"
             logger.info(f"Message {i}: Assistant - {msg.content[:50]}...")
-    
+
     logger.info(f"Full chat history for routing:\n{chat_history[:500]}...")
-    
-    # Use GPT-4o to determine routing
-    llm = ChatOpenAI(
-        temperature=0.1,
-        api_key=OPENAI_API_KEY,
-        model="gpt-4o"
+
+    # Use Claude 4 Sonnet via TrackedBedrockClient for routing decision with Langfuse tracking
+    # Extract user_id from state if available
+    messages = state.get('messages', [])
+    user_id = state.get('user_id', 'anonymous')
+    bedrock_client = TrackedBedrockClient(
+        session_id=f"router-{user_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+        agent_role="router",
+        user_id=user_id
     )
-    
-    # Use new LangChain syntax
-    prompt = PromptTemplate.from_template(ROUTER_AGENT_PROMPT)
-    chain = prompt | llm
-    
+
     try:
-        # Get routing decision from GPT-4o
-        response = await chain.ainvoke({"chat_history": chat_history})
-        logger.info(f"Router response: {response.content}")
-        
+        # Get routing decision from Claude 4 Sonnet
+        router_prompt = ROUTER_AGENT_PROMPT.format(chat_history=chat_history)
+        response_content = await bedrock_client.async_chat(router_prompt, max_tokens=500, temperature=0.1)
+        logger.info(f"Router response: {response_content}")
+
         # Parse JSON response
-        routing_data = json.loads(response.content.strip())
+        routing_data = json.loads(response_content.strip())
         agent_choice = routing_data.get("agent", "frontend_agent")
-        
+
         # Map task_generator_agent to task_generator for consistency
         if agent_choice == "task_generator_agent":
             agent_choice = "task_generator"
-        
+
         logger.info(f"Routing to: {agent_choice}")
         return {"agent": agent_choice}
-        
+
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON response from router: {e}")
         return {"agent": "frontend_agent"}  # Default fallback
@@ -726,7 +927,7 @@ def route_to_agent(state: AgentState) -> str:
     return agent_choice
 
 async def frontend_agent_node(state: AgentState) -> dict:
-    """Frontend agent node with GPT-4o call"""
+    """Frontend agent node with Claude 4 Sonnet via Bedrock"""
     messages = state.get('messages', [])
     user_id = state.get('user_id')
     user_info = state.get('user_info', '')
@@ -736,11 +937,7 @@ async def frontend_agent_node(state: AgentState) -> dict:
     task_gen = TaskGenerator(mock=state.get('mock', False))
     if user_id and not user_info:
         user_info = task_gen.get_user_info(user_id)
-    
-    if not OPENAI_API_KEY:
-        logger.error("OpenAI API key not configured")
-        return {"processed_data": {"error": "OpenAI API key not configured"}}
-    
+
     # Convert messages to chat history string
     chat_history = ""
     for msg in messages:
@@ -748,34 +945,31 @@ async def frontend_agent_node(state: AgentState) -> dict:
             chat_history += f"User: {msg.content}\n"
         elif isinstance(msg, AIMessage):
             chat_history += f"Assistant: {msg.content}\n"
-    
-    # Use GPT-4o for frontend response
-    llm = ChatOpenAI(
-        temperature=0.3,
-        api_key=OPENAI_API_KEY,
-        model="gpt-4o"
+
+    # Use Claude 4 Sonnet via TrackedBedrockClient for frontend response with Langfuse tracking
+    bedrock_client = TrackedBedrockClient(
+        session_id=f"frontend-{user_id or 'anonymous'}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+        agent_role="frontend-agent",
+        user_id=user_id or "anonymous"
     )
-    
-    # Use new LangChain syntax
-    prompt = PromptTemplate.from_template(FRONTEND_AGENT_PROMPT)
-    chain = prompt | llm
-    
+
     try:
         # Generate frontend response
-        response = await chain.ainvoke({
-            "chat_history": chat_history,
-            "user_info": user_info
-        })
-        
-        logger.info(f"Frontend agent response: {response.content[:100]}...")
-        
+        frontend_prompt = FRONTEND_AGENT_PROMPT.format(
+            chat_history=chat_history,
+            user_info=user_info
+        )
+        response_content = await bedrock_client.async_chat(frontend_prompt, max_tokens=1000, temperature=0.3)
+
+        logger.info(f"Frontend agent response: {response_content[:100]}...")
+
         # Generate task_id for consistency
         task_id = str(uuid.uuid4())
         timestamp = datetime.now().isoformat()
-        
+
         # Format response to match task_solver_agent.py KAFKA_RESULTS_TOPIC format
         chat_response = {
-            "content": response.content,
+            "content": response_content,
             "source": "frontend-agent",
             "task_id": task_id,
             "type": "frontend_response",
@@ -788,13 +982,13 @@ async def frontend_agent_node(state: AgentState) -> dict:
         print("chat_response", chat_response)
         # Send to Kafka RESULTS topic (same as task_solver_agent)
         success = task_gen.send_result_to_kafka(chat_response)
-        
+
         if success:
             logger.info("Frontend response sent to Kafka results topic")
             return {
                 "processed_data": {
                     "agent_used": "frontend_agent",
-                    "response": response.content,
+                    "response": response_content,
                     "task_id": task_id,
                     "kafka_sent": True
                 }
@@ -804,13 +998,13 @@ async def frontend_agent_node(state: AgentState) -> dict:
             return {
                 "processed_data": {
                     "agent_used": "frontend_agent",
-                    "response": response.content,
+                    "response": response_content,
                     "task_id": task_id,
                     "kafka_sent": False,
                     "error": "Failed to send to Kafka"
                 }
             }
-            
+
     except Exception as e:
         logger.error(f"Frontend agent error: {e}")
         return {"processed_data": {"error": str(e), "agent_used": "frontend_agent"}}

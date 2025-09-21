@@ -33,6 +33,18 @@ spec:
           value: {{ .Values.env.kafkaResultsTopic | quote }}
         - name: OPENAI_API_KEY
           value: {{ .Values.env.openaiApiKey | quote }}
+        {{- if .Values.env.langfuseHost }}
+        - name: LANGFUSE_HOST
+          value: {{ .Values.env.langfuseHost | quote }}
+        {{- end }}
+        {{- if .Values.env.langfusePublicKey }}
+        - name: LANGFUSE_PUBLIC_KEY
+          value: {{ .Values.env.langfusePublicKey | quote }}
+        {{- end }}
+        {{- if .Values.env.langfuseSecretKey }}
+        - name: LANGFUSE_SECRET_KEY
+          value: {{ .Values.env.langfuseSecretKey | quote }}
+        {{- end }}
         livenessProbe:
           httpGet:
             path: /health

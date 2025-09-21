@@ -108,6 +108,10 @@ env:
   langchainEndpoint: "https://api.smith.langchain.com"
   langchainApiKey: ""  # Set via --set env.langchainApiKey="your-key" or secrets.yaml
   langsmithApiKey: ""  # Set via --set env.langsmithApiKey="your-key" or secrets.yaml
+  # Langfuse Configuration for LLM observability and tracking
+  langfusePublicKey: ""  # Set via --set env.langfusePublicKey="your-key" or secrets.yaml
+  langfuseSecretKey: ""  # Set via --set env.langfuseSecretKey="your-key" or secrets.yaml
+  langfuseHost: "https://us.cloud.langfuse.com"  # Set via --set env.langfuseHost="your-host" or secrets.yaml
 
 # External Secrets (for production)
 externalSecrets:
