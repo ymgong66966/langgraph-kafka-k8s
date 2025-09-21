@@ -159,11 +159,24 @@ LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
 LANGFUSE_HOST = os.getenv("LANGFUSE_HOST")
 
 # Initialize Langfuse client with specific project
-langfuse = Langfuse(
-    public_key=LANGFUSE_PUBLIC_KEY,
-    secret_key=LANGFUSE_SECRET_KEY,
-    host=LANGFUSE_HOST
-)
+try:
+    if LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY and LANGFUSE_HOST:
+        langfuse = Langfuse(
+            public_key=LANGFUSE_PUBLIC_KEY,
+            secret_key=LANGFUSE_SECRET_KEY,
+            host=LANGFUSE_HOST
+        )
+        logger.info(f"✅ Langfuse client initialized successfully. Host: {LANGFUSE_HOST}")
+        logger.info(f"Langfuse client methods: {[method for method in dir(langfuse) if not method.startswith('_')]}")
+    else:
+        logger.warning(f"❌ Langfuse environment variables not set properly:")
+        logger.warning(f"  LANGFUSE_PUBLIC_KEY: {'✅ set' if LANGFUSE_PUBLIC_KEY else '❌ missing'}")
+        logger.warning(f"  LANGFUSE_SECRET_KEY: {'✅ set' if LANGFUSE_SECRET_KEY else '❌ missing'}")
+        logger.warning(f"  LANGFUSE_HOST: {'✅ set' if LANGFUSE_HOST else '❌ missing'}")
+        langfuse = None
+except Exception as e:
+    logger.error(f"❌ Failed to initialize Langfuse client: {e}")
+    langfuse = None
 
 # # Set the project for all traces
 # def create_langfuse_with_project(project_name="test_graph"):
