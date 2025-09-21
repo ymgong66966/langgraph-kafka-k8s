@@ -212,7 +212,7 @@ class TrackedBedrockClient(BedrockClient):
             # Call the parent converse method directly
             start_time = datetime.now()
             messages = [{"role": "user", "content": prompt}]
-            response = super().converse(messages, max_tokens=max_tokens)
+            response = super(TrackedBedrockClient, self).converse(messages, max_tokens=max_tokens)
             end_time = datetime.now()
 
             # Calculate approximate token counts (rough estimation)
@@ -282,7 +282,7 @@ class TrackedBedrockClient(BedrockClient):
             messages = [{"role": "user", "content": prompt}]
             import asyncio
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, lambda: super().converse(messages, max_tokens=max_tokens, temperature=temperature))
+            response = await loop.run_in_executor(None, lambda: super(TrackedBedrockClient, self).converse(messages, max_tokens=max_tokens, temperature=temperature))
             end_time = datetime.now()
 
             # Calculate approximate token counts
