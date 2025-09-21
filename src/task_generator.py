@@ -15,7 +15,7 @@ from kafka.errors import KafkaError
 from fastmcp import Client
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
-import logger
+from loguru import logger
 class BedrockClient:
     """AWS Bedrock client for Kubernetes pods with role assumption"""
     def __init__(self):
