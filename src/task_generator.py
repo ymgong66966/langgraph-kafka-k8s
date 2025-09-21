@@ -15,7 +15,7 @@ from kafka.errors import KafkaError
 from fastmcp import Client
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
-
+import logger
 class BedrockClient:
     """AWS Bedrock client for Kubernetes pods with role assumption"""
     def __init__(self):
@@ -125,24 +125,24 @@ class BedrockClient:
             logger.error(f"Unexpected error in converse: {e}")
             raise
 
-    def simple_chat(self, prompt, max_tokens=1000):
-        """Simple chat interface for single prompts"""
-        messages = [{"role": "user", "content": prompt}]
-        return self.converse(messages, max_tokens=max_tokens)
+    # def simple_chat(self, prompt, max_tokens=1000):
+    #     """Simple chat interface for single prompts"""
+    #     messages = [{"role": "user", "content": prompt}]
+    #     return self.converse(messages, max_tokens=max_tokens)
 
-    async def async_chat(self, prompt, max_tokens=1000, temperature=0.2):
-        """Async chat interface for single prompts (compatible with LangChain patterns)"""
-        messages = [{"role": "user", "content": prompt}]
-        # Run synchronous converse in async context
-        import asyncio
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: self.converse(messages, max_tokens=max_tokens, temperature=temperature))
+    # async def async_chat(self, prompt, max_tokens=1000, temperature=0.2):
+    #     """Async chat interface for single prompts (compatible with LangChain patterns)"""
+    #     messages = [{"role": "user", "content": prompt}]
+    #     # Run synchronous converse in async context
+    #     import asyncio
+    #     loop = asyncio.get_event_loop()
+    #     return await loop.run_in_executor(None, lambda: self.converse(messages, max_tokens=max_tokens, temperature=temperature))
 
-    async def async_converse(self, messages, max_tokens=1000, temperature=0.2, top_p=0.9):
-        """Async converse interface for multiple messages (compatible with LangChain patterns)"""
-        import asyncio
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: self.converse(messages, max_tokens=max_tokens, temperature=temperature, top_p=top_p))
+    # async def async_converse(self, messages, max_tokens=1000, temperature=0.2, top_p=0.9):
+    #     """Async converse interface for multiple messages (compatible with LangChain patterns)"""
+    #     import asyncio
+    #     loop = asyncio.get_event_loop()
+    #     return await loop.run_in_executor(None, lambda: self.converse(messages, max_tokens=max_tokens, temperature=temperature, top_p=top_p))
 
 
 
@@ -167,6 +167,7 @@ try:
             host=LANGFUSE_HOST
         )
         logger.info(f"✅ Langfuse client initialized successfully. Host: {LANGFUSE_HOST}")
+        logger.info(f"Langfuse client: {LANGFUSE_PUBLIC_KEY}, {LANGFUSE_SECRET_KEY}, {LANGFUSE_HOST}")
         logger.info(f"Langfuse client methods: {[method for method in dir(langfuse) if not method.startswith('_')]}")
     else:
         logger.warning(f"❌ Langfuse environment variables not set properly:")
