@@ -27,14 +27,14 @@ langfuse = Langfuse(
     host=LANGFUSE_HOST
 )
 
-# Set the project for all traces
-def create_langfuse_with_project(project_name="test_graph"):
-    """Create Langfuse client configured for specific project"""
-    return Langfuse(
-        public_key=LANGFUSE_PUBLIC_KEY,
-        secret_key=LANGFUSE_SECRET_KEY,
-        host=LANGFUSE_HOST
-    )
+# # Set the project for all traces
+# def create_langfuse_with_project(project_name="test_graph"):
+#     """Create Langfuse client configured for specific project"""
+#     return Langfuse(
+#         public_key=LANGFUSE_PUBLIC_KEY,
+#         secret_key=LANGFUSE_SECRET_KEY,
+#         host=LANGFUSE_HOST
+#     )
 
 class TrackedBedrockClient(BedrockClient):
     """BedrockClient with Langfuse tracking"""

@@ -165,14 +165,14 @@ langfuse = Langfuse(
     host=LANGFUSE_HOST
 )
 
-# Set the project for all traces
-def create_langfuse_with_project(project_name="test_graph"):
-    """Create Langfuse client configured for specific project"""
-    return Langfuse(
-        public_key=LANGFUSE_PUBLIC_KEY,
-        secret_key=LANGFUSE_SECRET_KEY,
-        host=LANGFUSE_HOST
-    )
+# # Set the project for all traces
+# def create_langfuse_with_project(project_name="test_graph"):
+#     """Create Langfuse client configured for specific project"""
+#     return Langfuse(
+#         public_key=LANGFUSE_PUBLIC_KEY,
+#         secret_key=LANGFUSE_SECRET_KEY,
+#         host=LANGFUSE_HOST
+#     )
 
 class TrackedBedrockClient(BedrockClient):
     """BedrockClient with Langfuse tracking"""
@@ -185,25 +185,19 @@ class TrackedBedrockClient(BedrockClient):
 
     def simple_chat(self, prompt, max_tokens=1000, **kwargs):
         """Simple chat with Langfuse logging"""
-        # Create a trace and generation
-        trace = langfuse.trace(
-            name="task-generator-conversation",
-            user_id=self.user_id,
-            session_id=self.session_id,
-            project="test_graph",
-            metadata={
-                "system": "langgraph-kafka",
-                "component": "task-generator"
-            }
-        )
-
-        generation = trace.generation(
+        # Create a generation trace (using working pattern from example)
+        generation = langfuse.generation(
             name=f"bedrock-{self.agent_role}-simple-chat",
             model=self.model_id,
             input=prompt,
+            session_id=self.session_id,
+            user_id=self.user_id,
+            project="test_graph",
             metadata={
                 "max_tokens": max_tokens,
                 "region": self.region,
+                "system": "langgraph-kafka",
+                "component": "task-generator",
                 **kwargs
             }
         )
@@ -245,26 +239,20 @@ class TrackedBedrockClient(BedrockClient):
 
     async def async_chat(self, prompt, max_tokens=1000, temperature=0.2, **kwargs):
         """Async chat with Langfuse logging"""
-        # Create a trace and generation
-        trace = langfuse.trace(
-            name="task-generator-conversation",
-            user_id=self.user_id,
-            session_id=self.session_id,
-            project="test_graph",
-            metadata={
-                "system": "langgraph-kafka",
-                "component": "task-generator"
-            }
-        )
-
-        generation = trace.generation(
+        # Create a generation trace (using working pattern from example)
+        generation = langfuse.generation(
             name=f"bedrock-{self.agent_role}-async-chat",
             model=self.model_id,
             input=prompt,
+            session_id=self.session_id,
+            user_id=self.user_id,
+            project="test_graph",
             metadata={
                 "max_tokens": max_tokens,
                 "temperature": temperature,
                 "region": self.region,
+                "system": "langgraph-kafka",
+                "component": "task-generator",
                 **kwargs
             }
         )
