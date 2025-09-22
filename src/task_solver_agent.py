@@ -380,7 +380,7 @@ class TrackedBedrockClient:
                     for tool_result in message.get('content'):
                         tool_result_list.append({
                             "type": "tool_result",
-                            "tool_use_id": tool_result.get('tool_call_id'),
+                            "tool_use_id": str(tool_result.get('tool_call_id')),
                             "content": tool_result.get('content')
                         })
                     bedrock_messages.append({
@@ -967,7 +967,7 @@ Please try a different approach or tool.
             for tool_message in tool_messages:
                 extended_thinking_tool_messages.append({
                         "type": "tool_result",
-                        "tool_use_id": tool_message.tool_call_id,
+                        "tool_use_id": str(tool_message.tool_call_id),
                         "content": tool_message.content
                     })
             return {
