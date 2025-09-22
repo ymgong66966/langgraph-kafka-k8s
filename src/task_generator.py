@@ -871,7 +871,7 @@ async def task_generator_node(state: AgentState) -> dict:
                 return {
                     "processed_data": {
                         **task_data,
-                        "delegation_response": filler_response.content,
+                        "delegation_response": filler_response["content"],
                         "delegation_task_id": delegation_task_id,
                         "delegation_sent": delegation_success
                     }
