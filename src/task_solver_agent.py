@@ -146,15 +146,29 @@ class TrackedBedrockClient:
         bedrock_tools = None
         if tools:
             bedrock_tools = []
-            for tool in tools:
+            logger.info(f"Converting {len(tools)} tools from OpenAI to Bedrock format")
+            for i, tool in enumerate(tools):
+                logger.info(f"Tool {i}: {tool}")
                 if tool.get("type") == "function":
                     func_def = tool.get("function", {})
+                    # Ensure all required fields are valid strings
+                    name = func_def.get("name", "")
+                    description = func_def.get("description", "")
+
+                    # Convert None or non-string values to empty strings
+                    if not isinstance(name, str):
+                        name = str(name) if name is not None else ""
+                    if not isinstance(description, str):
+                        description = str(description) if description is not None else ""
+
                     bedrock_tool = {
-                        "name": func_def.get("name"),
-                        "description": func_def.get("description"),
+                        "name": name,
+                        "description": description,
                         "input_schema": func_def.get("parameters", {})
                     }
+                    logger.info(f"Converted to Bedrock tool: {bedrock_tool}")
                     bedrock_tools.append(bedrock_tool)
+            logger.info(f"Final bedrock_tools: {bedrock_tools}")
 
         # Create Langfuse generation for tracking (same pattern as reference)
         generation = None
@@ -565,14 +579,23 @@ class TaskSolverAgent:
     def convert_fastmcp_tool_to_openai_format(self, tool):
         """Convert FastMCP tool to OpenAI function format"""
         sanitized_name = self.sanitize_tool_name(tool.name)
-        return {
+        logger.info(f"Converting MCP tool: name={tool.name}, description={tool.description}, inputSchema={tool.inputSchema}")
+
+        # Ensure description is a string
+        description = tool.description if tool.description is not None else ""
+        if not isinstance(description, str):
+            description = str(description)
+
+        converted_tool = {
             "type": "function",
             "function": {
                 "name": sanitized_name,
-                "description": tool.description,
+                "description": description,
                 "parameters": tool.inputSchema
             }
         }
+        logger.info(f"Converted to OpenAI format: {converted_tool}")
+        return converted_tool
         
     async def should_continue(self, state: AgentState) -> Literal["agent", "final_answer"]:
         """Use LLM to intelligently decide whether to continue research or provide final answer"""
