@@ -244,7 +244,11 @@ class TrackedBedrockClient:
 
             for content_block in response_body.get('content', []):
                 if content_block.get('type') == 'thinking':
-                    thinking_content.append(content_block.get('content', ''))
+                    # Preserve the complete thinking block including signature
+                    thinking_content.append({
+                        'thinking': content_block.get('thinking', ''),
+                        'signature': content_block.get('signature', '')
+                    })
                 elif content_block.get('type') == 'text':
                     text_content.append(content_block.get('text', ''))
                 elif content_block.get('type') == 'tool_use':
@@ -400,10 +404,11 @@ class TrackedBedrockClient:
             bedrock_content = []
 
             # Add thinking blocks FIRST (required by AWS Bedrock)
-            for thinking in thinking_content:
+            for thinking_block in thinking_content:
                 bedrock_content.append({
                     "type": "thinking",
-                    "content": thinking
+                    "thinking": thinking_block['thinking'],
+                    "signature": thinking_block['signature']
                 })
 
             # Add text content
@@ -422,8 +427,10 @@ class TrackedBedrockClient:
 
         # Log thinking process
         if thinking_content:
-            for thinking in thinking_content:
-                logger.info(f"🧠 Claude thinking: {thinking[:200]}...")
+            for thinking_block in thinking_content:
+                logger.info(f"🧠 Claude thinking: {thinking_block['thinking'][:200]}...")
+                if thinking_block['signature']:
+                    logger.info(f"🧠 Claude signature: {thinking_block['signature'][:100]}...")
 
         return ai_message
 
