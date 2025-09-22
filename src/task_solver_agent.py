@@ -277,7 +277,7 @@ class TrackedBedrockClient:
                         },
                         metadata={
                             "duration_ms": int((end_time - start_time).total_seconds() * 1000),
-                            "thinking_tokens": len(' '.join(thinking_content).split()) if thinking_content else 0,
+                            "thinking_tokens": sum(len(tb['thinking'].split()) for tb in thinking_content) if thinking_content else 0,
                             "text_tokens": len(' '.join(text_content).split()) if text_content else 0,
                             "has_tool_use": bool(tool_use_content),
                             "stop_reason": response_body.get('stop_reason')
@@ -443,7 +443,7 @@ class TrackedBedrockClient:
         # Log thinking process
         if thinking_content:
             for thinking_block in thinking_content:
-                logger.info(f"🧠 Claude thinking: {thinking_block['thinking'][:200]}...")
+                logger.info(f"🧠 Claude thinking: {thinking_block['thinking']}...")
                 if thinking_block['signature']:
                     logger.info(f"🧠 Claude signature: {thinking_block['signature'][:100]}...")
 
