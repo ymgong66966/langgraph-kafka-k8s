@@ -10,3 +10,5 @@ requests>=2.31.0
 pydantic>=2.11.7
 fastmcp
 boto3
+langfuse>=2.0.0
+botocore

@@ -37,31 +37,8 @@ class BedrockClient:
                      os.getenv('KUBERNETES_SERVICE_HOST')
             
             if is_k8s:
-                logger.info("Kubernetes environment detected, attempting IRSA role assumption")
-                try:
-                    sts_client = boto3.client('sts', region_name=self.region)
-
-                    assumed_role = sts_client.assume_role(
-                        RoleArn='arn:aws:iam::216989110335:role/OrganizationAccountAccessRole',
-                        RoleSessionName='bedrock-k8s-session'
-                    )
-
-                    credentials = assumed_role['Credentials']
-
-                    self.client = boto3.client(
-                        'bedrock-runtime',
-                        region_name=self.region,
-                        aws_access_key_id=credentials['AccessKeyId'],
-                        aws_secret_access_key=credentials['SecretAccessKey'],
-                        aws_session_token=credentials['SessionToken']
-                    )
-
-                    logger.info("Successfully initialized Bedrock client with IRSA role")
-                except Exception as irsa_error:
-                    logger.warning(f"IRSA failed: {irsa_error}")
-                    logger.info("Falling back to default AWS credentials")
-                    self.client = boto3.client('bedrock-runtime', region_name=self.region)
-                    logger.info("Successfully initialized Bedrock client with default credentials")
+                self.client = boto3.client('bedrock-runtime', region_name=self.region)
+                logger.info("Successfully initialized Bedrock client with default credentials")
             else:
                 logger.info("Local environment detected, using default AWS credentials")
                 self.client = boto3.client('bedrock-runtime', region_name=self.region)

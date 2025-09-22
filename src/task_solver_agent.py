@@ -5,6 +5,7 @@ import asyncio
 import threading
 import requests
 import uuid
+import time
 from typing import Dict, Any, Optional, TypedDict, List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -16,12 +17,15 @@ from datetime import datetime
 import uuid
 # Import MCP LangGraph Agent
 from fastmcp import Client
-from langchain_openai import ChatOpenAI
+# from langchain_openai import ChatOpenAI  # Replaced with TrackedBedrockClient
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import ToolMessage
 from typing import Literal, Annotated
 from operator import add
+import boto3
+from botocore.exceptions import ClientError, NoCredentialsError
+from langfuse import Langfuse
 
 # Configure LangSmith tracing
 os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2", os.getenv("LANGCHAIN_TRACING", "false"))
@@ -37,6 +41,377 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Initialize Langfuse for LLM tracking
+langfuse = None
+try:
+    LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
+    LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
+    LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://us.cloud.langfuse.com")
+
+    if LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY:
+        langfuse = Langfuse(
+            public_key=LANGFUSE_PUBLIC_KEY,
+            secret_key=LANGFUSE_SECRET_KEY,
+            host=LANGFUSE_HOST
+        )
+        logger.info("✅ Langfuse client initialized successfully")
+    else:
+        logger.warning("❌ Langfuse environment variables not set, tracking disabled")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize Langfuse client: {e}")
+    langfuse = None
+
+class TrackedBedrockClient:
+    """
+    BedrockClient replacement for ChatOpenAI with:
+    - AWS authentication (Kubernetes IRSA + local fallback)
+    - Langfuse tracking
+    - Extended thinking support
+    - Tool use capabilities
+    - ChatOpenAI-compatible interface
+    """
+
+    def __init__(self, model="claude-sonnet-4", api_key=None, temperature=0.1, **kwargs):
+        # Bedrock configuration
+        self.region = 'us-east-2'
+        self.model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+        self.temperature = temperature
+        self.client = None
+        self.session_id = f"task-solver-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
+        # Initialize AWS Bedrock client (from task_generator.py authentication)
+        self._initialize_client()
+
+    def _initialize_client(self):
+        """Initialize Bedrock client using authentication method from task_generator.py"""
+        try:
+            k8s_token_file = os.getenv('AWS_WEB_IDENTITY_TOKEN_FILE')
+
+            # Check multiple indicators for Kubernetes environment
+            is_k8s = (k8s_token_file and os.path.exists(k8s_token_file)) or \
+                     os.path.exists('/var/run/secrets/kubernetes.io/serviceaccount/token') or \
+                     os.getenv('KUBERNETES_SERVICE_HOST')
+
+            if is_k8s:
+                logger.info("Kubernetes environment detected, using default credentials")
+                self.client = boto3.client('bedrock-runtime', region_name=self.region)
+                logger.info("Successfully initialized Bedrock client with default credentials")
+            else:
+                logger.info("Local environment detected, using default AWS credentials")
+                self.client = boto3.client('bedrock-runtime', region_name=self.region)
+                logger.info("Successfully initialized Bedrock client with default credentials")
+
+        except NoCredentialsError:
+            logger.error("No AWS credentials found. Ensure AWS profile is configured or IRSA is set up.")
+            raise
+        except ClientError as e:
+            logger.error(f"Failed to initialize Bedrock client: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error initializing Bedrock client: {e}")
+            raise
+
+    def _retry_with_backoff(self, func, max_retries=5, base_delay=1.0, max_delay=60.0, backoff_factor=2.0):
+        """Retry function with exponential backoff for throttling"""
+        for attempt in range(max_retries):
+            try:
+                return func()
+            except ClientError as e:
+                error_code = e.response['Error']['Code']
+                if error_code == 'ThrottlingException' and attempt < max_retries - 1:
+                    delay = min(base_delay * (backoff_factor ** attempt), max_delay)
+                    logger.info(f"Throttling detected, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                    continue
+                else:
+                    raise
+        return func()  # Final attempt
+
+    async def ainvoke(self, messages, **kwargs):
+        """
+        Main method to replace ChatOpenAI.ainvoke() calls
+
+        Args:
+            messages: List of LangChain message objects
+            **kwargs: Additional parameters
+
+        Returns:
+            AIMessage object with tool_calls if present (compatible with LangChain)
+        """
+        # Get tools from bound client or kwargs
+        tools = getattr(self, '_bound_tools', kwargs.get('tools', None))
+
+        # Convert tools from OpenAI format to Bedrock format if needed
+        bedrock_tools = None
+        if tools:
+            bedrock_tools = []
+            for tool in tools:
+                if tool.get("type") == "function":
+                    func_def = tool.get("function", {})
+                    bedrock_tool = {
+                        "name": func_def.get("name"),
+                        "description": func_def.get("description"),
+                        "input_schema": func_def.get("parameters", {})
+                    }
+                    bedrock_tools.append(bedrock_tool)
+
+        # Create Langfuse generation for tracking (same pattern as reference)
+        generation = None
+        if langfuse:
+            try:
+                generation = langfuse.generation(
+                    name="bedrock-claude-tools-thinking",
+                    model=self.model_id,
+                    input=[self._message_to_dict(msg) for msg in messages],
+                    session_id=self.session_id,
+                    metadata={
+                        "max_tokens": kwargs.get('max_tokens', 4000),
+                        "thinking_budget": kwargs.get('thinking_budget', 2000),
+                        "tools_enabled": bool(bedrock_tools),
+                        "num_tools": len(bedrock_tools) if bedrock_tools else 0,
+                        "region": self.region,
+                        **kwargs
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create Langfuse generation: {e}")
+                generation = None
+
+        try:
+            start_time = datetime.now()
+
+            # Convert LangChain messages to Bedrock format
+            bedrock_messages = self._convert_langchain_to_bedrock_messages(messages)
+
+            # Prepare request body (same pattern as reference)
+            request_body = {
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": kwargs.get('max_tokens', 4000),
+                "messages": bedrock_messages
+            }
+
+            # Add extended thinking configuration
+            thinking_budget = kwargs.get('thinking_budget', 2000)
+            if thinking_budget and thinking_budget < kwargs.get('max_tokens', 4000):
+                request_body["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": thinking_budget
+                }
+
+            # Add tools if provided (same pattern as reference)
+            if bedrock_tools:
+                request_body["tools"] = bedrock_tools
+                # Don't force tool use when thinking is enabled - let Claude decide
+                # request_body["tool_choice"] = {"type": "any"}  # Conflicts with thinking mode
+
+            # Make Bedrock API call with retry logic
+            response = self._retry_with_backoff(
+                lambda: self.client.invoke_model(
+                    modelId=self.model_id,
+                    body=json.dumps(request_body)
+                )
+            )
+
+            end_time = datetime.now()
+
+            # Parse response
+            response_body = json.loads(response['body'].read().decode('utf-8'))
+
+            # Extract content blocks (same pattern as reference)
+            thinking_content = []
+            text_content = []
+            tool_use_content = []
+
+            # Debug: Check response structure
+            if 'content' not in response_body:
+                logger.warning(f"Warning: No 'content' key in response. Keys: {list(response_body.keys())}")
+                logger.warning(f"Full response: {response_body}")
+
+            for content_block in response_body.get('content', []):
+                if content_block.get('type') == 'thinking':
+                    thinking_content.append(content_block.get('content', ''))
+                elif content_block.get('type') == 'text':
+                    text_content.append(content_block.get('text', ''))
+                elif content_block.get('type') == 'tool_use':
+                    tool_use_content.append(content_block)
+
+            # Calculate token usage
+            usage = response_body.get('usage', {})
+
+            # Log successful response to Langfuse (same pattern as reference)
+            if generation:
+                try:
+                    generation.end(
+                        output={
+                            "thinking": thinking_content,
+                            "text": text_content,
+                            "tool_use": tool_use_content,
+                            "full_response": response_body
+                        },
+                        usage={
+                            "input": usage.get('input_tokens', 0),
+                            "output": usage.get('output_tokens', 0),
+                            "total": usage.get('input_tokens', 0) + usage.get('output_tokens', 0)
+                        },
+                        metadata={
+                            "duration_ms": int((end_time - start_time).total_seconds() * 1000),
+                            "thinking_tokens": len(' '.join(thinking_content).split()) if thinking_content else 0,
+                            "text_tokens": len(' '.join(text_content).split()) if text_content else 0,
+                            "has_tool_use": bool(tool_use_content),
+                            "stop_reason": response_body.get('stop_reason')
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to end Langfuse generation: {e}")
+
+            # Create AIMessage with tool calls (LangChain compatible)
+            ai_message = self._create_ai_message_from_bedrock_response(
+                thinking_content, text_content, tool_use_content
+            )
+
+            return ai_message
+
+        except Exception as e:
+            # Log error to Langfuse
+            if generation:
+                try:
+                    generation.end(
+                        level="ERROR",
+                        metadata={"error": str(e)}
+                    )
+                except Exception as langfuse_error:
+                    logger.warning(f"Failed to log error to Langfuse: {langfuse_error}")
+
+            logger.error(f"Error in TrackedBedrockClient.ainvoke: {e}")
+            raise
+
+    def bind(self, tools=None, **kwargs):
+        """
+        Return a bound client with tools (for LangChain compatibility)
+        """
+        bound_client = TrackedBedrockClient(
+            model=self.model_id,
+            temperature=self.temperature
+        )
+        bound_client._bound_tools = tools or []
+        bound_client._bound_kwargs = kwargs
+        bound_client.session_id = self.session_id
+        return bound_client
+
+    def _message_to_dict(self, message):
+        """Convert LangChain message to dict for Langfuse logging"""
+        if hasattr(message, 'type'):
+            return {
+                "role": message.type,
+                "content": message.content
+            }
+        else:
+            return {
+                "role": "user",
+                "content": str(message)
+            }
+
+    def _convert_langchain_to_bedrock_messages(self, messages):
+        """Convert LangChain messages to Bedrock format, preserving thinking blocks"""
+        bedrock_messages = []
+
+        for message in messages:
+            if isinstance(message, HumanMessage):
+                bedrock_messages.append({
+                    "role": "user",
+                    "content": message.content
+                })
+            elif isinstance(message, AIMessage):
+                # Handle AIMessage with potential tool calls and thinking blocks
+                content = []
+
+                # Check if message has thinking blocks in its content (preserved from previous turns)
+                if hasattr(message, '_bedrock_content') and message._bedrock_content:
+                    # Use preserved bedrock content structure
+                    content = message._bedrock_content
+                else:
+                    # Regular text content
+                    if message.content:
+                        content.append({
+                            "type": "text",
+                            "text": message.content
+                        })
+
+                    # Add tool calls if present
+                    if hasattr(message, 'tool_calls') and message.tool_calls:
+                        for tool_call in message.tool_calls:
+                            content.append({
+                                "type": "tool_use",
+                                "id": tool_call.get("id", str(uuid.uuid4())),
+                                "name": tool_call.get("name"),
+                                "input": tool_call.get("args", {})
+                            })
+
+                bedrock_messages.append({
+                    "role": "assistant",
+                    "content": content if content else [{"type": "text", "text": str(message.content)}]
+                })
+            else:
+                # Handle other message types (like ToolMessage)
+                bedrock_messages.append({
+                    "role": "user",
+                    "content": str(message.content) if hasattr(message, 'content') else str(message)
+                })
+
+        return bedrock_messages
+
+    def _create_ai_message_from_bedrock_response(self, thinking_content, text_content, tool_use_content):
+        """Create AIMessage from Bedrock response, preserving thinking blocks for next turn"""
+        # Combine text content
+        combined_text = ' '.join(text_content).strip()
+
+        # Create AIMessage
+        ai_message = AIMessage(content=combined_text)
+
+        # Add tool calls if present
+        if tool_use_content:
+            tool_calls = []
+            for tool_block in tool_use_content:
+                tool_calls.append({
+                    "name": tool_block.get('name'),
+                    "args": tool_block.get('input', {}),
+                    "id": tool_block.get('id', str(uuid.uuid4()))
+                })
+            ai_message.tool_calls = tool_calls
+
+        # CRITICAL: Preserve the complete Bedrock content structure for next turn
+        # AWS Bedrock requires thinking blocks to come FIRST when thinking is enabled
+        if thinking_content or tool_use_content:
+            bedrock_content = []
+
+            # Add thinking blocks FIRST (required by AWS Bedrock)
+            for thinking in thinking_content:
+                bedrock_content.append({
+                    "type": "thinking",
+                    "content": thinking
+                })
+
+            # Add text content
+            for text in text_content:
+                bedrock_content.append({
+                    "type": "text",
+                    "text": text
+                })
+
+            # Add tool use content
+            for tool_block in tool_use_content:
+                bedrock_content.append(tool_block)
+
+            # Store the complete structure for next turn
+            ai_message._bedrock_content = bedrock_content
+
+        # Log thinking process
+        if thinking_content:
+            for thinking in thinking_content:
+                logger.info(f"🧠 Claude thinking: {thinking[:200]}...")
+
+        return ai_message
 
 # Updated State for MCP integration
 # class TaskSolverState(TypedDict):
@@ -90,10 +465,9 @@ class TaskSolverAgent:
         self.max_tool_calls = 4
         self.mcp_server_url = "http://a7a09ec61615e46a7892d050e514c11e-1977986439.us-east-2.elb.amazonaws.com/mcp"
         
-        # Initialize LLM
-        self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            api_key=self.openai_api_key,
+        # Initialize LLM - Replace ChatOpenAI with TrackedBedrockClient
+        self.llm = TrackedBedrockClient(
+            model="claude-sonnet-4",
             temperature=0.1
         )
         self.memory = MemorySaver()
@@ -265,10 +639,9 @@ Decision:"""
 
         # Use LLM to make routing decision
         try:
-            routing_llm = ChatOpenAI(
-                model="gpt-4o-mini",  # Use faster model for routing decisions
-                temperature=0.1,
-                api_key=OPENAI_API_KEY
+            routing_llm = TrackedBedrockClient(
+                model="claude-sonnet-4",  # Use Claude 4 Sonnet for routing decisions
+                temperature=0.1
             )
             
             response = await routing_llm.ainvoke([HumanMessage(content=routing_prompt)])
