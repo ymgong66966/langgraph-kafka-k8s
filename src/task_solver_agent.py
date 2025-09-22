@@ -776,6 +776,7 @@ Instructions:
 5. when you need to make a website_map tool call. if you have a url from google_maps tool call, you need to act like a url parser for generating proper root urls for the firecrawl web_map funtion, where it smartly converses the subwebsites of a url. Your input is the url provided about something, the problem is that it can be too specific to be the root url used for web_map. You should know that the root url does not always mean the domain of the input url. For example, for the input url: 
 https://www.homeinstead.com/home-care/usa/ca/san-francisco/220/?utm_source=google&utm_medium=organic&utm_campaign=google_organic_businesslisting_y  . you actually need to keep the url up to 
 https://www.homeinstead.com/home-care/usa/ca/san-francisco Because it contains the geo-location of the url, which is useful information. But a lot of other times, you can just use the domain of the url as the root url. this is important.
+6. IMPORTANT NOTE: you can make multiple parallel tool calls at the same time if necessary. 
 
 For example, for questions like: What Medicaid benefits are available in my state? Which local agencies provide in-home care? Are there adult daycare centers near me? Where can I rent a hospital bed for home use? What local resources help with incontinence supplies? 
 
@@ -821,6 +822,8 @@ CURRENT STATUS: {tool_call_count}/{max_calls} tools used, {max_calls - tool_call
 
 This was the planner plan for the most recent question in the below question history. Figure out where you are in the process based on the planner plan and make the proper next step. Remember, you can use it as a mild guide, but you don't always have to follow the planner plan, you can also improvise based on the info you have:
 {planner_plan}
+
+IMPORTANT NOTE: you can make multiple parallel tool calls at the same time if necessary. 
 
 #####################
 DECISION PROCESS:
@@ -1124,7 +1127,26 @@ Now provide a detailed, actionable response that directly incorporates the tool 
             
             # Extract final response
             final_message = result["messages"][-1]
-            solution = final_message.content if hasattr(final_message, 'content') else str(final_message)
+
+            # Handle case where content might be structured (with thinking blocks)
+            if hasattr(final_message, 'content'):
+                if isinstance(final_message.content, str):
+                    solution = final_message.content
+                elif isinstance(final_message.content, list):
+                    # Extract text content from structured response
+                    text_parts = []
+                    for block in final_message.content:
+                        if isinstance(block, dict) and block.get('type') == 'text':
+                            text_parts.append(block.get('text', ''))
+                        elif isinstance(block, str):
+                            text_parts.append(block)
+                    solution = ' '.join(text_parts).strip()
+                    if not solution:
+                        solution = "Response generated but contains no text content"
+                else:
+                    solution = str(final_message.content)
+            else:
+                solution = str(final_message)
             
             # Create solution response
             solution_data = TaskSolution(
