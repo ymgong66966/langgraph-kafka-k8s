@@ -675,7 +675,7 @@ class TrackedBedrockClient(BedrockClient):
 
         while turn <= max_turns:
             print(f"\n--- Turn {turn} ---")
-
+            print("messages: ", messages)
             # Generate response - choose method based on thinking preference
             if use_thinking:
                 print("Thinking + tools")
@@ -692,7 +692,7 @@ class TrackedBedrockClient(BedrockClient):
                     max_tokens=4000,
                     force_tool_use=False  # Let Claude decide
                 )
-            print(response)
+            
             # Display thinking process if available
             thinking_blocks = [block for block in response.get('content', []) if block['type'] == 'thinking']
             if thinking_blocks:

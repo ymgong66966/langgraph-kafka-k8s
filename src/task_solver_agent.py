@@ -397,10 +397,10 @@ class TrackedBedrockClient:
     def _create_ai_message_from_bedrock_response(self, thinking_content, text_content, tool_use_content):
         """Create AIMessage from Bedrock response, preserving thinking blocks for next turn"""
         # Combine text content
-        combined_text = ' '.join(text_content).strip()
+        # combined_text = ' '.join(text_content).strip()
 
         # Create AIMessage
-        ai_message = AIMessage(content=combined_text)
+        ai_message = AIMessage(content="")
 
         # Add tool calls if present
         if tool_use_content:
@@ -439,6 +439,7 @@ class TrackedBedrockClient:
 
             # Store the complete structure for next turn
             ai_message._bedrock_content = bedrock_content
+            ai_message.content = bedrock_content
 
         # Log thinking process
         if thinking_content:
@@ -833,7 +834,8 @@ https://www.homeinstead.com/home-care/usa/ca/san-francisco Because it contains t
 IMPORTANT: Base your decision on the actual tool results visible in this conversation, not assumptions.
 
 """
-                messages_with_system = messages + [HumanMessage(content=guidance_prompt)]
+                messages_with_system = messages 
+                # + [HumanMessage(content=guidance_prompt)]
             else:
                 messages_with_system = messages
         
@@ -958,9 +960,15 @@ Please try a different approach or tool.
                     logger.warning(f"⚠️ Tool {original_name} ultimately failed after all retries")
 
             logger.info(f"🏁 Sequential tool execution complete: {tools_used} tools processed")
-            
+            extended_thinking_tool_messages = []
+            for tool_message in tool_messages:
+                extended_thinking_tool_messages.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_message.tool_call_id,
+                        "content": tool_message.content
+                    })
             return {
-                "messages": tool_messages,
+                "messages": [{"role": "user", "content": extended_thinking_tool_messages}],
                 "tool_call_count": state["tool_call_count"] + tools_used
             }
     
