@@ -148,7 +148,7 @@ class TrackedBedrockClient:
             bedrock_tools = []
             logger.info(f"Converting {len(tools)} tools from OpenAI to Bedrock format")
             for i, tool in enumerate(tools):
-                logger.info(f"Tool {i}: {tool}")
+                # logger.info(f"Tool {i}: {tool}")
                 if tool.get("type") == "function":
                     func_def = tool.get("function", {})
                     # Ensure all required fields are valid strings
@@ -166,9 +166,9 @@ class TrackedBedrockClient:
                         "description": description,
                         "input_schema": func_def.get("parameters", {})
                     }
-                    logger.info(f"Converted to Bedrock tool: {bedrock_tool}")
+                    # logger.info(f"Converted to Bedrock tool: {bedrock_tool}")
                     bedrock_tools.append(bedrock_tool)
-            logger.info(f"Final bedrock_tools: {bedrock_tools}")
+            # logger.info(f"Final bedrock_tools: {bedrock_tools}")
 
         # Create Langfuse generation for tracking (same pattern as reference)
         generation = None
@@ -598,7 +598,7 @@ class TaskSolverAgent:
     def convert_fastmcp_tool_to_openai_format(self, tool):
         """Convert FastMCP tool to OpenAI function format"""
         sanitized_name = self.sanitize_tool_name(tool.name)
-        logger.info(f"Converting MCP tool: name={tool.name}, description={tool.description}, inputSchema={tool.inputSchema}")
+        # logger.info(f"Converting MCP tool: name={tool.name}, description={tool.description}, inputSchema={tool.inputSchema}")
 
         # Ensure description is a string
         description = tool.description if tool.description is not None else ""
@@ -849,7 +849,8 @@ IMPORTANT: First of all, only make one tool call at a time. You will be annihila
             logger.info("🚫 Agent cannot use tools (limit reached or no tools available)")
         
         response = await model_with_tools.ainvoke(messages_with_system)
-        logger.info(f"🎭 Agent response: {'has tool calls' if hasattr(response, 'tool_calls') and response.tool_calls else 'no tool calls'}")
+        # logger.info(f"🎭 Agent response: {'has tool calls' if hasattr(response, 'tool_calls') and response.tool_calls else 'no tool calls'}")
+        logger.info(f"🎭 Agent response in this turn: {response}")
         return {"messages": [response]}
     
     async def tool_node(self, state: AgentState) -> Dict[str, Any]:
