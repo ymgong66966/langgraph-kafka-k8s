@@ -370,8 +370,20 @@ class TrackedBedrockClient:
                     "role": "assistant",
                     "content": content if content else [{"type": "text", "text": str(message.content)}]
                 })
+            elif isinstance(message, ToolMessage):
+                # Handle ToolMessage with proper tool_result format for Bedrock
+                bedrock_messages.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": message.tool_call_id,
+                            "content": message.content
+                        }
+                    ]
+                })
             else:
-                # Handle other message types (like ToolMessage)
+                # Handle other message types
                 bedrock_messages.append({
                     "role": "user",
                     "content": str(message.content) if hasattr(message, 'content') else str(message)
