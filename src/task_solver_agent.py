@@ -380,7 +380,7 @@ class TrackedBedrockClient:
                     for tool_result in message.get('content'):
                         tool_result_list.append({
                             "type": "tool_result",
-                            "tool_use_id": str(tool_result.get('tool_call_id')),
+                            "tool_use_id": str(tool_result.get('tool_use_id')),
                             "content": tool_result.get('content')
                         })
                     bedrock_messages.append({
@@ -394,7 +394,7 @@ class TrackedBedrockClient:
                     "role": "user",
                     "content": str(message.content) if hasattr(message, 'content') else str(message)
                 })
-
+        logger.info(f"Bedrock messages: {bedrock_messages}")
         return bedrock_messages
 
     def _create_ai_message_from_bedrock_response(self, thinking_content, text_content, tool_use_content):
@@ -620,7 +620,7 @@ class TaskSolverAgent:
                 "parameters": tool.inputSchema
             }
         }
-        logger.info(f"Converted to OpenAI format: {converted_tool}")
+        # logger.info(f"Converted to OpenAI format: {converted_tool}")
         return converted_tool
         
     async def should_continue(self, state: AgentState) -> Literal["agent", "final_answer"]:
