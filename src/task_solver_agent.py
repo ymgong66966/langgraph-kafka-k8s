@@ -249,10 +249,13 @@ class TrackedBedrockClient:
                         'thinking': content_block.get('thinking', ''),
                         'signature': content_block.get('signature', '')
                     })
+                    logger.info(f"Thinking content: {thinking_content}")
                 elif content_block.get('type') == 'text':
                     text_content.append(content_block.get('text', ''))
+                    logger.info(f"Text content: {text_content}")
                 elif content_block.get('type') == 'tool_use':
                     tool_use_content.append(content_block)
+                    logger.info(f"Tool use content: {tool_use_content}")
 
             # Calculate token usage
             usage = response_body.get('usage', {})
