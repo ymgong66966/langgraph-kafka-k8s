@@ -367,6 +367,34 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka-service:90
 KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'dev-langgraph-agent-events')
 KAFKA_RESULTS_TOPIC = os.getenv('KAFKA_RESULTS_TOPIC', 'dev-langgraph-task-results')
 # OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')  # No longer needed - using BedrockClient instead
+FILTER_AGENT_PROMPT = """
+You can only output one of these two strings: 1: "ROUTER" 2: "HUMAN". 
+Your input is a string that is the user's message. 
+If the user's message is very close to one of the following questions, output "HUMAN": 
+I need to schedule a consultation with a neurologist.
+Can you help me hire an in-home caregiver?
+I need to arrange transportation for my dad’s appointment.
+Please remind me to call Medicaid about our application.
+Help me coordinate moving mom into assisted living.
+I need to find and book respite care for next month.
+Can you schedule a follow-up with the rehab center?
+Can you tell me which which medications shouldn't be taken together?
+Help me organize a family meeting about care plans.
+Can you set up a time to interview home care agencies?
+I need to request medical records from the hospital.
+Please add a task to apply for the VA caregiver program.
+Can you call the pharamacy and check on my prescription?
+I need to arrange installation of safety grab bars.
+Help me coordinate meal deliveries for my dad.
+Can you help determine what's covered by insurance?
+Can you call my insurance to ask why they denied my claim?
+######################################################
+If the user's message is not very close to any of the above questions, output "ROUTER".
+IMPORTANT, do not output any other string such as "output", "result". Output either "ROUTER" or "HUMAN".
+
+Here is the user message: {user_message}
+"""
+
 ROUTER_AGENT_PROMPT = """
 You are a router agent that determines which agent to use based on the user's input. Here is the chat history: {chat_history}. 
 
@@ -634,6 +662,7 @@ class AgentState(TypedDict):
     processed_data: Optional[dict]
     agent: Optional[str]
     mock: Optional[bool]
+    filter_result: Optional[str]
 
 class TaskGenerator:
     def __init__(self, mock: bool = False):
@@ -903,6 +932,26 @@ async def task_generator_node(state: AgentState) -> dict:
             logger.error(f"Task generation error: {e}")
             return {"processed_data": {"error": str(e)}}
 
+async def filter_node(state: AgentState) -> dict:
+    """Router node to determine which agent to use"""
+    messages = state.get('messages', [])
+
+    user_message = messages[-1].content
+    try:
+        # Get routing decision from Claude 4 Sonnet
+        router_prompt = FILTER_AGENT_PROMPT.format(user_message=user_message)
+        response_content = await bedrock_client.async_chat(router_prompt, max_tokens=500, temperature=0.1)
+        logger.info(f"Filter response: {response_content}")
+
+        if response_content == "HUMAN" or response_content == "ROUTER":
+            return {"filter_result": response_content}
+        else:
+            return {"filter_result": "HUMAN"}
+
+    except Exception as e:
+        logger.error(f"Filter error: {e}")
+        return {"filter_result": "HUMAN"}
+
 async def router_node(state: AgentState) -> dict:
     """Router node to determine which agent to use"""
     messages = state.get('messages', [])
@@ -953,6 +1002,21 @@ async def router_node(state: AgentState) -> dict:
     except Exception as e:
         logger.error(f"Router error: {e}")
         return {"agent": "frontend_agent"}  # Default fallback
+def filter_to_route(state: AgentState) -> str:
+    filter_result = state.get("filter_result", "HUMAN")
+    return filter_result
+
+def human_support_node(state: AgentState) -> dict:
+    """Human support node with Claude 4 Sonnet via Bedrock"""
+    task_id = str(uuid.uuid4())
+    return {
+                "processed_data": {
+                    "agent_used": "frontend_agent",
+                    "response": "This question is beyond the scope of our AI agents. I will direct this to a member of our social worker team, who will reach back to you soon.",
+                    "task_id": task_id,
+                    "kafka_sent": True
+                }
+            }
 
 def route_to_agent(state: AgentState) -> str:
     """Route function for conditional edges"""
@@ -1052,9 +1116,20 @@ def create_task_generator_graph() -> StateGraph:
     workflow.add_node("task_generator", task_generator_node)
     workflow.add_node("router", router_node)
     workflow.add_node("frontend_agent", frontend_agent_node)
+    workflow.add_node("filter", filter_node)
+    workflow.add_node("human_support_node", human_support_node)
     
     # Add edges
-    workflow.add_edge(START, "router")
+    workflow.add_edge(START, "filter")
+    workflow.adde_conditional_edges(
+        "filter",
+        filter_to_route,
+        {
+            "HUMAN": "human_support_node",
+            "ROUTER": "router"
+        }
+    )
+
     workflow.add_conditional_edges(
         "router",
         route_to_agent,
@@ -1065,6 +1140,7 @@ def create_task_generator_graph() -> StateGraph:
     )
     workflow.add_edge("task_generator", END)
     workflow.add_edge("frontend_agent", END)
+    workflow.add_edge("human_support_node", END)
     
     return workflow.compile()
 
