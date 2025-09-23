@@ -37,42 +37,43 @@ class BedrockClient:
             # Check if we're in Kubernetes (has service account token file)
             k8s_token_file = os.getenv('AWS_WEB_IDENTITY_TOKEN_FILE')
             
-            if k8s_token_file and os.path.exists(k8s_token_file):
-                # Kubernetes environment - attempt IRSA role assumption
-                logger.info("Kubernetes environment detected, attempting IRSA role assumption")
-                try:
-                    sts_client = boto3.client('sts', region_name=self.region)
+            # if k8s_token_file and os.path.exists(k8s_token_file):
+            #     # Kubernetes environment - attempt IRSA role assumption
+            #     logger.info("Kubernetes environment detected, attempting IRSA role assumption")
+            #     try:
+            #         sts_client = boto3.client('sts', region_name=self.region)
 
-                    # Assume the role (OrganizationAccountAccessRole in account 216989110335)
-                    assumed_role = sts_client.assume_role(
-                        RoleArn='arn:aws:iam::216989110335:role/OrganizationAccountAccessRole',
-                        RoleSessionName='bedrock-k8s-session'
-                    )
+            #         # Assume the role (OrganizationAccountAccessRole in account 216989110335)
+            #         assumed_role = sts_client.assume_role(
+            #             RoleArn='arn:aws:iam::216989110335:role/OrganizationAccountAccessRole',
+            #             RoleSessionName='bedrock-k8s-session'
+            #         )
 
-                    # Extract credentials from the assumed role
-                    credentials = assumed_role['Credentials']
+            #         # Extract credentials from the assumed role
+            #         credentials = assumed_role['Credentials']
 
-                    # Create Bedrock client with assumed role credentials
-                    self.client = boto3.client(
-                        'bedrock-runtime',
-                        region_name=self.region,
-                        aws_access_key_id=credentials['AccessKeyId'],
-                        aws_secret_access_key=credentials['SecretAccessKey'],
-                        aws_session_token=credentials['SessionToken']
-                    )
+            #         # Create Bedrock client with assumed role credentials
+            #         self.client = boto3.client(
+            #             'bedrock-runtime',
+            #             region_name=self.region,
+            #             aws_access_key_id=credentials['AccessKeyId'],
+            #             aws_secret_access_key=credentials['SecretAccessKey'],
+            #             aws_session_token=credentials['SessionToken']
+            #         )
 
-                    logger.info("Successfully initialized Bedrock client with assumed role")
-                except Exception as irsa_error:
-                    logger.warning(f"IRSA role assumption failed: {irsa_error}")
-                    logger.info("Falling back to default AWS credentials")
-                    self.client = boto3.client('bedrock-runtime', region_name=self.region)
-                    logger.info("Successfully initialized Bedrock client with default credentials")
-            else:
+            #         logger.info("Successfully initialized Bedrock client with assumed role")
+            #     except Exception as irsa_error:
+            #         logger.warning(f"IRSA role assumption failed: {irsa_error}")
+            #         logger.info("Falling back to default AWS credentials")
+            #         self.client = boto3.client('bedrock-runtime', region_name=self.region)
+            #         logger.info("Successfully initialized Bedrock client with default credentials")
+            # else:
                 # Local environment - use default AWS credentials
-                logger.info("Local environment detected, using default AWS credentials")
-                session = boto3.Session(profile_name="withcare_dev", region_name="us-east-2")
-                self.client = session.client("bedrock-runtime")
-                logger.info("Successfully initialized Bedrock client with default credentials")
+            logger.info("Local environment detected, using default AWS credentials")
+            session = boto3.Session(profile_name="withcare-ml", region_name="us-east-2")
+            self.client = session.client("bedrock-runtime")
+            print("Successfully initialized Bedrock client with default credentials")
+            logger.info("Successfully initialized Bedrock client with default credentials")
             
         except NoCredentialsError:
             logger.error("No AWS credentials found. Ensure AWS profile is configured or IRSA is set up.")
@@ -213,8 +214,8 @@ class BedrockClient:
         return await loop.run_in_executor(None, lambda: self.converse(messages, max_tokens=max_tokens, temperature=temperature, top_p=top_p))
 # Configure Langfuse
 # You can get these from https://cloud.langfuse.com or your self-hosted instance
-LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "pk-lf-a37d7746-e39e-4c5e-9f90-c911b5dbad91")
-LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "sk-lf-7ee79e38-c88a-461f-a16b-9b1023a79285")
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "pk-lf-ecca6bde-7fc9-4dca-80b4-c2897568c606")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "sk-lf-49c1a028-ced8-4876-9c64-2aac19d61fa6")
 LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://us.cloud.langfuse.com")
 
 # Initialize Langfuse client with specific project
@@ -336,7 +337,7 @@ class TrackedBedrockClient(BedrockClient):
             model=self.model_id,
             input=prompt,
             session_id=self.session_id,
-            project="test_graph",
+            project="langgraph-agent",
             metadata={
                 "max_tokens": max_tokens,
                 "region": self.region,
@@ -387,7 +388,7 @@ class TrackedBedrockClient(BedrockClient):
             model=self.model_id,
             input=prompt,
             session_id=self.session_id,
-            project="test_graph",
+            project="langgraph-agent",
             metadata={
                 "max_tokens": max_tokens,
                 "temperature": temperature,
@@ -780,7 +781,7 @@ def create_conversation_trace(user_id: str = "test-user"):
         name="task-generator-conversation",
         user_id=user_id,
         session_id=session_id,
-        project="test_graph",
+        project="langgraph-agent",
         metadata={
             "system": "langgraph-kafka",
             "component": "task-generator"

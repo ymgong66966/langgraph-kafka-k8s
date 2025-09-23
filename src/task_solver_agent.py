@@ -72,13 +72,14 @@ class TrackedBedrockClient:
     - ChatOpenAI-compatible interface
     """
 
-    def __init__(self, model="claude-sonnet-4", api_key=None, temperature=0.1, **kwargs):
+    def __init__(self, model="claude-sonnet-4", user_id=None, api_key=None, temperature=0.1, **kwargs):
         # Bedrock configuration
         self.region = 'us-east-2'
         self.model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
         self.temperature = temperature
         self.client = None
         self.session_id = f"task-solver-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        self.user_id = user_id
 
         # Initialize AWS Bedrock client (from task_generator.py authentication)
         self._initialize_client()
@@ -128,7 +129,7 @@ class TrackedBedrockClient:
                     raise
         return func()  # Final attempt
 
-    async def ainvoke(self, messages, **kwargs):
+    async def ainvoke(self, messages, user_id,  **kwargs):
         """
         Main method to replace ChatOpenAI.ainvoke() calls
 
@@ -179,12 +180,14 @@ class TrackedBedrockClient:
                     model=self.model_id,
                     input=[self._message_to_dict(msg) for msg in messages],
                     session_id=self.session_id,
+                    project="langgraph-agent",
                     metadata={
-                        "max_tokens": kwargs.get('max_tokens', 4000),
+                        "max_tokens": kwargs.get('max_tokens', 40000),
                         "thinking_budget": kwargs.get('thinking_budget', 2000),
                         "tools_enabled": bool(bedrock_tools),
                         "num_tools": len(bedrock_tools) if bedrock_tools else 0,
                         "region": self.region,
+
                         **kwargs
                     }
                 )
@@ -201,7 +204,7 @@ class TrackedBedrockClient:
             # Prepare request body (same pattern as reference)
             request_body = {
                 "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": kwargs.get('max_tokens', 4000),
+                "max_tokens": kwargs.get('max_tokens', 40000),
                 "messages": bedrock_messages
             }
 
@@ -268,7 +271,8 @@ class TrackedBedrockClient:
                             "thinking": thinking_content,
                             "text": text_content,
                             "tool_use": tool_use_content,
-                            "full_response": response_body
+                            "full_response": response_body,
+                            "user_id": user_id
                         },
                         usage={
                             "input": usage.get('input_tokens', 0),
@@ -508,6 +512,7 @@ class TaskSolverAgent:
         # Initialize LLM - Replace ChatOpenAI with TrackedBedrockClient
         self.llm = TrackedBedrockClient(
             model="claude-sonnet-4",
+            
             temperature=0.1
         )
         self.memory = MemorySaver()
@@ -737,7 +742,7 @@ Decision:"""
         tool_call_count = state["tool_call_count"]
         max_calls = state["max_tool_calls"]
         planner_plan = state["planner_plan"]
-        
+        user_id = state["user_id"]
         # Use MCP client to get tools and bind to LLM
         client = Client({
             "enhanced_mcp": {
@@ -857,7 +862,7 @@ IMPORTANT: Base your decision on the actual tool results visible in this convers
             model_with_tools = self.llm
             logger.info("🚫 Agent cannot use tools (limit reached or no tools available)")
         
-        response = await model_with_tools.ainvoke(messages_with_system)
+        response = await model_with_tools.ainvoke(messages_with_system, user_id=user_id)
         # logger.info(f"🎭 Agent response: {'has tool calls' if hasattr(response, 'tool_calls') and response.tool_calls else 'no tool calls'}")
         logger.info(f"🎭 Agent response in this turn: {response}")
         return {"messages": [response]}
