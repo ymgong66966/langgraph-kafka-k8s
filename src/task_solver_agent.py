@@ -122,7 +122,7 @@ class TrackedBedrockClient:
                 error_code = e.response['Error']['Code']
                 if error_code == 'ThrottlingException' and attempt < max_retries - 1:
                     delay = min(base_delay * (backoff_factor ** attempt), max_delay)
-                    logger.info(f"Throttling detected, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
+                    logger.info(f"Throttling detected, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries}), error: {e}")
                     time.sleep(delay)
                     continue
                 else:
@@ -990,6 +990,7 @@ Please try a different approach or tool.
         user_info = state["user_info"]
         tool_call_count = state["tool_call_count"]
         max_tools = state["max_tool_calls"]
+        user_id = state["user_id"]
         
         # Count and analyze tool results for context
         tool_messages = [msg for msg in messages if isinstance(msg, ToolMessage)]
@@ -1042,7 +1043,7 @@ Now provide a detailed, actionable response that directly incorporates the tool 
         # Log final message count for debugging
         logger.info(f"🔀 Sending {len(messages_with_prompt)} messages to LLM for final answer")
         
-        response = await self.llm.ainvoke(messages_with_prompt)
+        response = await self.llm.ainvoke(messages_with_prompt, user_id=user_id)
         
         # Log response generation success
         logger.info(f"✅ Final answer generated: {len(response.content)} characters")
