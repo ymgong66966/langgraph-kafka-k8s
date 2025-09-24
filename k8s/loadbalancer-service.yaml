@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-interface-external
+  namespace: langgraph
+  labels:
+    app: chat-interface-external
+    service: external-api
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/component: chat-interface
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8003
+      protocol: TCP
+  # Optional: Specify external traffic policy for better performance
+  externalTrafficPolicy: Local

@@ -109,6 +109,17 @@ async def send_aws_message_async(user_id: str, messages: List[Dict[str, str]]) -
         logger.error(f"❌ AWS S3 delivery error for user {user_id}: {e}")
         return False
 
+async def send_aws_message_async_safe(user_id: str, messages: List[Dict[str, str]]):
+    """Safe AWS S3 delivery that never raises exceptions to UI delivery"""
+    try:
+        success = await send_aws_message_async(user_id, messages)
+        if success:
+            logger.info(f"✅ Background AWS S3 delivery successful for user {user_id}")
+        else:
+            logger.warning(f"⚠️ Background AWS S3 delivery failed for user {user_id} - UI delivery unaffected")
+    except Exception as e:
+        logger.error(f"❌ Background AWS S3 delivery exception for user {user_id}: {e} - UI delivery unaffected")
+
 async def broadcast_message(message: Dict):
     """Broadcast message to SSE clients, filtered by user_id, and send to AWS S3 if applicable"""
     message_json = json.dumps(message)
@@ -148,8 +159,11 @@ async def broadcast_message(message: Dict):
         aws_messages = [{"text": message.get('content', '')}]
 
         # Run AWS S3 delivery in background to avoid blocking
-        import asyncio
-        asyncio.create_task(send_aws_message_async(message_user_id, aws_messages))
+        try:
+            import asyncio
+            asyncio.create_task(send_aws_message_async_safe(message_user_id, aws_messages))
+        except Exception as e:
+            logger.error(f"Failed to create AWS S3 delivery task for user {message_user_id}: {e}")
 
 def kafka_response_consumer():
     """Background thread to consume messages from Kafka response topic"""
@@ -397,9 +411,8 @@ async def send_external_message(request: ExternalMessage):
     """
     External API endpoint for sending messages with user_id.
 
-    This endpoint accepts a user_id and list of messages. If UI is connected,
-    processes through task generator for both UI and AWS S3. If UI is not connected,
-    sends directly to AWS S3 only.
+    Always processes through task generator. Results are delivered to UI (if connected)
+    and AWS S3. UI delivery failures are caught gracefully and don't affect AWS S3 delivery.
     """
 
     # Validate input
@@ -417,104 +430,63 @@ async def send_external_message(request: ExternalMessage):
 
     logger.info(f"External API: Received request for user {request.user_id} with {len(request.messages)} messages")
 
-    # Check if user has any connected UI clients
-    user_has_connected_clients = any(
-        client_user_id == request.user_id
-        for client_user_id in sse_clients.values()
-    )
+    # Convert messages to conversation history format for task generator
+    conversation_history = []
+    for msg in request.messages[:-1]:  # All except the last message
+        role = msg.get('role', 'user')
+        text = msg.get('text', '')
 
-    if user_has_connected_clients:
-        logger.info(f"External API: User {request.user_id} has connected UI clients - processing through task generator")
+        conversation_history.append({
+            "id": str(uuid.uuid4()),
+            "type": "user" if role == "user" else "agent",
+            "content": text,
+            "timestamp": datetime.now().isoformat(),
+            "source": "external-api",
+            "user_id": request.user_id
+        })
 
-        # Convert messages to conversation history format for task generator
-        conversation_history = []
-        for msg in request.messages[:-1]:  # All except the last message
-            role = msg.get('role', 'user')
-            text = msg.get('text', '')
+    # Always forward to task generator (don't check UI connectivity)
+    try:
+        task_generator_url = "http://langgraph-kafka-task-generator:8001"
 
-            conversation_history.append({
-                "id": str(uuid.uuid4()),
-                "type": "user" if role == "user" else "agent",
-                "content": text,
-                "timestamp": datetime.now().isoformat(),
-                "source": "external-api",
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            payload = {
+                "conversation_history": conversation_history,
+                "current_message": current_message,
                 "user_id": request.user_id
-            })
+            }
 
-        # Forward to task generator for full processing (UI + AWS S3)
-        try:
-            task_generator_url = "http://langgraph-kafka-task-generator:8001"
+            logger.info(f"External API: Forwarding to task generator for user {request.user_id}")
+            response = await client.post(f"{task_generator_url}/generate-task", json=payload)
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                payload = {
-                    "conversation_history": conversation_history,
-                    "current_message": current_message,
-                    "user_id": request.user_id
-                }
-
-                logger.info(f"External API: Forwarding to task generator for user {request.user_id}")
-                response = await client.post(f"{task_generator_url}/generate-task", json=payload)
-
-                if response.status_code == 200:
-                    logger.info(f"External API: Successfully processed request for user {request.user_id}")
-                    return {
-                        "status": "success",
-                        "message": "Request processed through task generator (UI + AWS S3)",
-                        "user_id": request.user_id,
-                        "message_count": len(request.messages),
-                        "delivery": "ui_and_aws"
-                    }
-                else:
-                    logger.error(f"External API: Task generator error for user {request.user_id}: {response.status_code}")
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Task generator error: {response.status_code}"
-                    )
-
-        except httpx.RequestError as e:
-            logger.error(f"External API: Network error for user {request.user_id}: {e}")
-            logger.info(f"External API: Falling back to AWS S3 only for user {request.user_id}")
-            # Fall through to AWS-only delivery
-            user_has_connected_clients = False
-        except Exception as e:
-            logger.error(f"External API: Task generator error for user {request.user_id}: {e}")
-            logger.info(f"External API: Falling back to AWS S3 only for user {request.user_id}")
-            # Fall through to AWS-only delivery
-            user_has_connected_clients = False
-
-    if not user_has_connected_clients:
-        logger.info(f"External API: User {request.user_id} has no connected UI clients - sending to AWS S3 only")
-
-        # Send directly to AWS S3 without task generator processing
-        try:
-            # Convert the latest user message to AWS format
-            aws_messages = [{"text": current_message}]
-
-            # Send to AWS S3
-            success = await send_aws_message_async(request.user_id, aws_messages)
-
-            if success:
-                logger.info(f"External API: AWS S3 delivery successful for user {request.user_id}")
+            if response.status_code == 200:
+                logger.info(f"External API: Successfully processed request for user {request.user_id}")
                 return {
                     "status": "success",
-                    "message": "Message sent to AWS S3 only (no UI connected)",
+                    "message": "Request processed through task generator",
                     "user_id": request.user_id,
                     "message_count": len(request.messages),
-                    "delivery": "aws_only"
+                    "delivery": "task_generator"
                 }
             else:
-                logger.error(f"External API: AWS S3 delivery failed for user {request.user_id}")
+                logger.error(f"External API: Task generator error for user {request.user_id}: {response.status_code}")
                 raise HTTPException(
                     status_code=500,
-                    detail="Failed to deliver message to AWS S3"
+                    detail=f"Task generator error: {response.status_code}"
                 )
 
-        except Exception as e:
-            logger.error(f"External API: AWS S3 error for user {request.user_id}: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to send message to AWS S3: {str(e)}"
-            )
+    except httpx.RequestError as e:
+        logger.error(f"External API: Network error for user {request.user_id}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to connect to task generator service"
+        )
+    except Exception as e:
+        logger.error(f"External API: Unexpected error for user {request.user_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
 
 @app.get("/chat/history")
 async def get_chat_history(user_id: Optional[str] = Query(None)):
