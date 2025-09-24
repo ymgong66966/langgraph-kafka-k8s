@@ -779,7 +779,7 @@ async def task_generator_node(state: AgentState) -> dict:
         user_info = task_gen.get_user_info(user_id)
     
     # Convert LangChain messages to dict format for Kafka (last 10 messages only)
-    recent_messages = messages[-4:] if len(messages) > 4 else messages
+    recent_messages = messages[-6:] if len(messages) > 4 else messages
     messages_data = []
     for msg in recent_messages:
         if isinstance(msg, HumanMessage):
@@ -935,7 +935,12 @@ async def task_generator_node(state: AgentState) -> dict:
 async def filter_node(state: AgentState) -> dict:
     """Router node to determine which agent to use"""
     messages = state.get('messages', [])
-
+    user_id = state.get('user_id', 'anonymous')
+    bedrock_client = TrackedBedrockClient(
+            session_id=f"task-gen-{user_id or 'anonymous'}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+            agent_role="task-generator",
+            user_id=user_id or "anonymous"
+        )
     user_message = messages[-1].content
     try:
         # Get routing decision from Claude 4 Sonnet
@@ -1008,15 +1013,38 @@ def filter_to_route(state: AgentState) -> str:
 
 def human_support_node(state: AgentState) -> dict:
     """Human support node with Claude 4 Sonnet via Bedrock"""
+    task_gen = TaskGenerator(mock=state.get('mock', False))
     task_id = str(uuid.uuid4())
-    return {
-                "processed_data": {
-                    "agent_used": "frontend_agent",
-                    "response": "This question is beyond the scope of our AI agents. I will direct this to a member of our social worker team, who will reach back to you soon.",
+    human_support_response = {
+                    "content": "This question is beyond the scope of our AI agents. I will direct this to a member of our social worker team, who will reach back to you soon.",
+                    "source": "task-generator-delegation",
                     "task_id": task_id,
-                    "kafka_sent": True
+                    "type": "delegation_response",
+                    "user_id": user_id,
+                    "metadata": {
+                        "user_info": user_info,
+                        "original_task_delegated": True,
+                        "agent_type": "task_generator"
+                    }
                 }
-            }
+                
+    # Send delegation response to Kafka results topic
+    delegation_success = task_gen.send_result_to_kafka(human_support_response)
+
+    if delegation_success:
+        logger.info("Human support sent to Kafka results topic")
+    else:
+        logger.error("Failed to send human support to Kafka")
+
+    return {
+        "processed_data": {
+            **task_data,
+            "delegation_response": "This question is beyond the scope of our AI agents. I will direct this to a member of our social worker team, who will reach back to you soon.",
+            "delegation_task_id": task_id,
+            "delegation_sent": delegation_success
+        }
+    }
+
 
 def route_to_agent(state: AgentState) -> str:
     """Route function for conditional edges"""
