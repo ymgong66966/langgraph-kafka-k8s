@@ -491,6 +491,7 @@ class AgentState(TypedDict):
     planner_plan: str
     tool_call_count: int
     max_tool_calls: int
+    no_tool_calls: bool = False
 
 class TaskSolverAgent:
     def __init__(self):
@@ -635,12 +636,13 @@ class TaskSolverAgent:
         user_info = state["user_info"]
         tool_call_count = state["tool_call_count"]
         max_calls = state["max_tool_calls"]
-        
+        no_tool_calls = state["no_tool_calls"]
         # Force final answer if at tool limit
         if tool_call_count >= max_calls:
             logger.info("🚫 Tool limit reached - routing to final_answer")
             return "final_answer"
-        
+        if no_tool_calls == True:
+            return "final_answer"
         # CRITICAL: Check if the last agent message has tool calls
         # If not, the agent decided not to use tools, so go to final_answer
         last_ai_message = None
@@ -648,8 +650,7 @@ class TaskSolverAgent:
             if isinstance(msg, AIMessage):
                 last_ai_message = msg
                 break
-        if last_ai_message and last_ai_message.content == "No tool calls anymore":
-            return "final_answer"
+        
         if last_ai_message and hasattr(last_ai_message, 'tool_calls') and last_ai_message.tool_calls:
             # Agent made tool calls, continue with agent after tools execute
             logger.info(f"🔧 Agent made {len(last_ai_message.tool_calls)} tool calls - routing to agent")
@@ -888,8 +889,7 @@ IMPORTANT: Base your decision on the actual tool results visible in this convers
             logger.info(f"🔧 Executing tool calls SEQUENTIALLY: {last_message.tool_calls}")
             if len(last_message.tool_calls) == 0:
                 return {
-                "messages": [AIMessage(content= "No tool calls anymore")],
-                "tool_call_count": state["tool_call_count"] + tools_used
+                "no_tool_calls": True
             }
             # Sequential execution with delays and retries
             for i, tool_call in enumerate(last_message.tool_calls):
@@ -997,38 +997,36 @@ Please try a different approach or tool.
         max_tools = state["max_tool_calls"]
         user_id = state["user_id"]
         
-        # Count and analyze tool results for context
-        tool_messages = [msg for msg in messages if isinstance(msg, ToolMessage)]
-        tool_summary = ""
+#         # Count and analyze tool results for context
+#         tool_messages = [msg for msg in messages if isinstance(msg, ToolMessage)]
+#         tool_summary = ""
         
-        if tool_messages:
-            successful_tools = [msg for msg in tool_messages if not msg.content.startswith("❌")]
-            failed_tools = [msg for msg in tool_messages if msg.content.startswith("❌")]
+#         if tool_messages:
+#             successful_tools = [msg for msg in tool_messages if not msg.content.startswith("❌")]
+#             failed_tools = [msg for msg in tool_messages if msg.content.startswith("❌")]
             
-            tool_summary = f"""
-🛠️ TOOL EXECUTION SUMMARY:
-• Total tools used: {tool_call_count}/{max_tools}
-• Successful: {len(successful_tools)}
-• Failed: {len(failed_tools)}
-• Tool results are available in the conversation above"""
+#             tool_summary = f"""
+# 🛠️ TOOL EXECUTION SUMMARY:
+# • Total tools used: {tool_call_count}/{max_tools}
+# • Successful: {len(successful_tools)}
+# • Failed: {len(failed_tools)}
+# • Tool results are available in the conversation above"""
             
-            if failed_tools:
-                tool_summary += f"\n• Note: {len(failed_tools)} tools encountered errors - work with available data"
+#             if failed_tools:
+#                 tool_summary += f"\n• Note: {len(failed_tools)} tools encountered errors - work with available data"
         
-        # Add debugging and validation logging
-        logger.info(f"🎯 Final answer processing: {len(messages)} total messages, {len(tool_messages)} tool results")
+#         # Add debugging and validation logging
+#         logger.info(f"🎯 Final answer processing: {len(messages)} total messages, {len(tool_messages)} tool results")
         
-        # Log tool results for debugging
-        for i, tool_msg in enumerate(tool_messages):
-            content_preview = tool_msg.content[:150].replace('\n', ' ')
-            logger.info(f"Tool result {i+1}: {content_preview}...")
+#         # Log tool results for debugging
+#         for i, tool_msg in enumerate(tool_messages):
+#             content_preview = tool_msg.content[:150].replace('\n', ' ')
+#             logger.info(f"Tool result {i+1}: {content_preview}...")
         
         # Enhanced final prompt that explicitly instructs LLM to use tool results
         final_prompt = f"""🎯 FINAL ANSWER GENERATION
 
 You are now ready to provide the comprehensive final answer based on ALL information gathered.
-
-{tool_summary}
 
 📋 CRITICAL INSTRUCTIONS:
 1. **CAREFULLY REVIEW** all tool results above in the conversation
