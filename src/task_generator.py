@@ -1121,7 +1121,7 @@ def create_task_generator_graph() -> StateGraph:
     
     # Add edges
     workflow.add_edge(START, "filter")
-    workflow.adde_conditional_edges(
+    workflow.add_conditional_edges(
         "filter",
         filter_to_route,
         {
