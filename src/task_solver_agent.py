@@ -408,7 +408,9 @@ class TrackedBedrockClient:
 
         # Create AIMessage
         ai_message = AIMessage(content="")
-
+        print(f"Thinking content: {thinking_content}")
+        print(f"Text content: {text_content}")
+        print(f"Tool use content: {tool_use_content}")
         # Add tool calls if present
         if tool_use_content:
             tool_calls = []
@@ -422,7 +424,7 @@ class TrackedBedrockClient:
 
         # CRITICAL: Preserve the complete Bedrock content structure for next turn
         # AWS Bedrock requires thinking blocks to come FIRST when thinking is enabled
-        if thinking_content or tool_use_content:
+        if thinking_content or tool_use_content or len(text_content)>0:
             bedrock_content = []
 
             # Add thinking blocks FIRST (required by AWS Bedrock)
