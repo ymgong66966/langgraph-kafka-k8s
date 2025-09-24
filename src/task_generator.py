@@ -1003,9 +1003,9 @@ async def followup_question_node(state: AgentState) -> dict:
         response_content = await bedrock_client.async_chat(followup_question_prompt, max_tokens=500, temperature=0.1)
         logger.info(f"Follow-up question response: {response_content}")
         followup_response = {
-                    "content": response_content,
+                    "content": "*** Follow-up Question ***\n\n" + response_content,
                     "source": "followup-question",
-                    "task_id": delegation_task_id,
+                    "task_id": "followup-question",
                     "type": "followup_question",
                     "user_id": user_id,
                     "metadata": {
