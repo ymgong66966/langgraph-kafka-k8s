@@ -1013,6 +1013,8 @@ def filter_to_route(state: AgentState) -> str:
 
 def human_support_node(state: AgentState) -> dict:
     """Human support node with Claude 4 Sonnet via Bedrock"""
+    user_id = state.get('user_id', 'anonymous')
+    user_info = state.get('user_info', 'anonymous')
     task_gen = TaskGenerator(mock=state.get('mock', False))
     task_id = str(uuid.uuid4())
     human_support_response = {
