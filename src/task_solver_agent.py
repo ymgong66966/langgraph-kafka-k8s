@@ -867,7 +867,10 @@ IMPORTANT: Base your decision on the actual tool results visible in this convers
         response = await model_with_tools.ainvoke(messages_with_system, user_id=user_id)
         # logger.info(f"🎭 Agent response: {'has tool calls' if hasattr(response, 'tool_calls') and response.tool_calls else 'no tool calls'}")
         logger.info(f"🎭 Agent response in this turn: {response}")
-        return {"messages": [response]}
+        if response.content != "":
+            return {"messages": [response]}
+        else:
+            return {"no_tool_calls": True}
     
     async def tool_node(self, state: AgentState) -> Dict[str, Any]:
         """Execute MCP tools sequentially with rate limiting and robust error handling"""
