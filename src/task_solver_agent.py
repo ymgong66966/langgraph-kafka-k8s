@@ -868,7 +868,7 @@ IMPORTANT: Base your decision on the actual tool results visible in this convers
         # logger.info(f"🎭 Agent response: {'has tool calls' if hasattr(response, 'tool_calls') and response.tool_calls else 'no tool calls'}")
         logger.info(f"🎭 Agent response in this turn: {response}")
         if response.content != "":
-            return {"messages": [response]}
+            return {"messages": [response], "no_tool_calls": False}
         else:
             return {"no_tool_calls": True}
     
