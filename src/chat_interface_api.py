@@ -69,7 +69,7 @@ def send_navigator_message(user_id: str, messages: List[Dict[str, str]]) -> bool
 
     headers = {
         "Content-Type": "application/json",
-        "x-api-key": "iwja4JC4q765W7VlfqBVx2RAYSISs9lPwEyqNvfh"
+        "x-api-key": "0h5c9wlW2L8Joqk6fpJUz6NnsIjLB6Su7V62ozcd"
     }
 
     payload = {
