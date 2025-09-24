@@ -370,7 +370,7 @@ KAFKA_RESULTS_TOPIC = os.getenv('KAFKA_RESULTS_TOPIC', 'dev-langgraph-task-resul
 FILTER_AGENT_PROMPT = """
 You can only output one of these two strings: 1: "ROUTER" 2: "HUMAN". 
 Your input is a string that is the user's message. 
-If the user's message is very close to one of the following questions, output "HUMAN": 
+If the user's message is exactly one of the following questions, output "HUMAN". IMPORTANT: the user's message has to be exactly one of the following questions for you to output "HUMAN", otherwise output "ROUTER": 
 I need to schedule a consultation with a neurologist.
 Can you help me hire an in-home caregiver?
 I need to arrange transportation for my dad’s appointment.
@@ -389,7 +389,7 @@ Help me coordinate meal deliveries for my dad.
 Can you help determine what's covered by insurance?
 Can you call my insurance to ask why they denied my claim?
 ######################################################
-If the user's message is not very close to any of the above questions, output "ROUTER".
+If the user's message is not exactly one of the above questions, output "ROUTER". 
 IMPORTANT, do not output any other string such as "output", "result". Output either "ROUTER" or "HUMAN".
 
 Here is the user message: {user_message}
