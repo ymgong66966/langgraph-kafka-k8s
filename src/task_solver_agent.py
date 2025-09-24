@@ -648,7 +648,8 @@ class TaskSolverAgent:
             if isinstance(msg, AIMessage):
                 last_ai_message = msg
                 break
-        
+        if last_ai_message and last_ai_message.content == "No tool calls anymore":
+            return "final_answer"
         if last_ai_message and hasattr(last_ai_message, 'tool_calls') and last_ai_message.tool_calls:
             # Agent made tool calls, continue with agent after tools execute
             logger.info(f"🔧 Agent made {len(last_ai_message.tool_calls)} tool calls - routing to agent")
@@ -885,7 +886,11 @@ IMPORTANT: Base your decision on the actual tool results visible in this convers
             tools_used = 0
 
             logger.info(f"🔧 Executing tool calls SEQUENTIALLY: {last_message.tool_calls}")
-
+            if len(last_message.tool_calls) == 0:
+                return {
+                "messages": [AIMessage(content= "No tool calls anymore")],
+                "tool_call_count": state["tool_call_count"] + tools_used
+            }
             # Sequential execution with delays and retries
             for i, tool_call in enumerate(last_message.tool_calls):
                 sanitized_name = tool_call["name"]

@@ -419,6 +419,23 @@ you should route to the frontend agent because the user is simply providing you 
 I want you to choose the agent that best fits the user's input. The output should be a JSON object with the following format: {{"agent": "frontend_agent"}} or {{"agent": "task_generator_agent"}}. IMPORTANT: Do not include any additional text such as 'json' or 'json object' or explanation in the output. Only include the JSON object.
 """
 
+FOLLOWUP_QUESTION_PROMPT = """
+You are a expert social worker in health care and caregiving. You are given a context and a in-depth user question. Your input includes: 1. user info. 2. user question. 3. chat history. 
+
+  Your task is to acknowledge that what they need and ask related follow-up questions to the user to get more information. The questions can be related to both the user's information, like where their care recipient lives, or their care recipient's condition, confirming who this is for, etc. or can be asking what specific information about that thing do they need, etc. IMPORTANT: You need to limit the number of questions to 2. These two questions should be short and concise and there should only be two question marks in the output. The output should be a JSON object with the following format: {{"followup_questions": ["your response and follow-up question"]}}. IMPORTANT: Do not include any additional text such as 'json' or 'json object' or explanation in the output. Only include the JSON object.
+
+  Here are your inputs:
+
+  User info: {user_info}
+
+  User question: {user_question}
+
+  Chat history: {chat_history}
+
+  Now give me your output:
+"""
+
+
 FRONTEND_AGENT_PROMPT = """
 You are a compassionate and professional frontend assistant specializing in caregiver support. Your primary role is to provide emotional support, maintain engaging conversations, and offer general guidance while being warm and empathetic. 
 
@@ -957,7 +974,88 @@ async def filter_node(state: AgentState) -> dict:
         logger.error(f"Filter error: {e}")
         return {"filter_result": "HUMAN"}
 
+async def followup_question_node(state: AgentState) -> dict:
+    messages = state.get('messages', [])
+    user_id = state.get('user_id')
+    user_info = state.get('user_info', '')
+    
+    # Get user info if user_id provided but user_info is empty
+    task_gen = TaskGenerator(mock=state.get('mock', False))
+    if user_id and not user_info:
+        user_info = task_gen.get_user_info(user_id)
+
+    chat_history = ""
+    for i, msg in enumerate(messages):
+        if isinstance(msg, HumanMessage):
+            chat_history += f"User: {msg.content}\n"
+        elif isinstance(msg, AIMessage):
+            chat_history += f"Assistant: {msg.content}\n"
+
+    user_question = messages[-1].content
+
+    followup_question_prompt = FOLLOWUP_QUESTION_PROMPT.format(user_info=user_info, user_question=user_question, chat_history=chat_history)
+    bedrock_client = TrackedBedrockClient(
+            session_id=f"followup-question-{user_id or 'anonymous'}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+            agent_role="followup-question",
+            user_id=user_id or "anonymous"
+        )
+    try:
+        response_content = await bedrock_client.async_chat(followup_question_prompt, max_tokens=500, temperature=0.1)
+        logger.info(f"Follow-up question response: {response_content}")
+        followup_response = {
+                    "content": response_content,
+                    "source": "followup-question",
+                    "task_id": delegation_task_id,
+                    "type": "followup_question",
+                    "user_id": user_id,
+                    "metadata": {
+                        "user_info": user_info,
+                        "original_task_delegated": True,
+                        "agent_type": "task_generator"
+                    }
+                }
+        task_data =   {
+                    "messages": "",
+                    "user_id": "",
+                    "user_info": "",
+                    "planner_plan": ""
+                }
+        # Send follow-up question response to Kafka results topic
+        followup_success = task_gen.send_result_to_kafka(followup_response)
+        if followup_success:
+            logger.info("Follow-up question response sent to Kafka results topic")
+        else:
+            logger.error("Failed to send follow-up question response to Kafka")
+        return {
+            "processed_data": {
+                **task_data,
+                "delegation_response": followup_response["content"],
+                "delegation_task_id": "followup",
+                "delegation_sent": followup_success
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Follow-up question error: {e}")
+        task_data =   {
+                    "messages": "",
+                    "user_id": "",
+                    "user_info": "",
+                    "planner_plan": ""
+                }
+        return {
+            "processed_data": {
+                **task_data,
+                "delegation_response": f"Follow-up question error: {e}",
+                "delegation_task_id": "followup",
+                "delegation_sent": False
+            }
+        }
+
+    
+
 async def router_node(state: AgentState) -> dict:
+
     """Router node to determine which agent to use"""
     messages = state.get('messages', [])
 
@@ -965,10 +1063,14 @@ async def router_node(state: AgentState) -> dict:
     chat_history = ""
     logger.info(f"Router received {len(messages)} messages")
     for i, msg in enumerate(messages):
+        
         if isinstance(msg, HumanMessage):
             chat_history += f"User: {msg.content}\n"
             logger.info(f"Message {i}: User - {msg.content[:50]}...")
         elif isinstance(msg, AIMessage):
+            if len(msg.content) > 26:
+                if msg.content[0:26] == "*** Follow-up Question ***" and len(messages) - i < 3:
+                    return {"agent": "task_generator"}
             chat_history += f"Assistant: {msg.content}\n"
             logger.info(f"Message {i}: Assistant - {msg.content[:50]}...")
 
@@ -976,7 +1078,6 @@ async def router_node(state: AgentState) -> dict:
 
     # Use Claude 4 Sonnet via TrackedBedrockClient for routing decision with Langfuse tracking
     # Extract user_id from state if available
-    messages = state.get('messages', [])
     user_id = state.get('user_id', 'anonymous')
     bedrock_client = TrackedBedrockClient(
         session_id=f"router-{user_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
@@ -996,7 +1097,7 @@ async def router_node(state: AgentState) -> dict:
 
         # Map task_generator_agent to task_generator for consistency
         if agent_choice == "task_generator_agent":
-            agent_choice = "task_generator"
+            agent_choice = "followup_question_node" # actually route it to followup question node when the in-depth question first pops up. If there was already a followup question asked, then go to task generator
 
         logger.info(f"Routing to: {agent_choice}")
         return {"agent": agent_choice}
@@ -1148,7 +1249,7 @@ def create_task_generator_graph() -> StateGraph:
     workflow.add_node("frontend_agent", frontend_agent_node)
     workflow.add_node("filter", filter_node)
     workflow.add_node("human_support_node", human_support_node)
-    
+    workflow.add_node("followup_question_node", followup_question_node)
     # Add edges
     workflow.add_edge(START, "filter")
     workflow.add_conditional_edges(
@@ -1165,12 +1266,14 @@ def create_task_generator_graph() -> StateGraph:
         route_to_agent,
         {
             "frontend_agent": "frontend_agent",
-            "task_generator": "task_generator"
+            "task_generator": "task_generator",
+            "followup_question_node": "followup_question_node"
         }
     )
     workflow.add_edge("task_generator", END)
     workflow.add_edge("frontend_agent", END)
     workflow.add_edge("human_support_node", END)
+    workflow.add_edge("followup_question_node", END)
     
     return workflow.compile()
 
@@ -1179,9 +1282,9 @@ graph = create_task_generator_graph()
 
 async def generate_task_from_messages(messages: List[BaseMessage], user_id: str = None, user_info: str = None, mock: bool = False) -> dict:
     """Generate task from messages and send to Kafka"""
-    print("messages", messages)
-    print("user_id", user_id)
-    print("user_info", user_info)
+    # print("messages", messages)
+    # print("user_id", user_id)
+    # print("user_info", user_info)
     result = await graph.ainvoke({
         "messages": messages,
         "user_id": user_id,
