@@ -452,7 +452,7 @@ async def send_external_message(request: ExternalMessage):
     try:
         task_generator_url = "http://langgraph-kafka-task-generator:8001"
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=90.0) as client:
             payload = {
                 "conversation_history": conversation_history,
                 "current_message": current_message,
@@ -479,10 +479,11 @@ async def send_external_message(request: ExternalMessage):
                 )
 
     except httpx.RequestError as e:
-        logger.error(f"External API: Network error for user {request.user_id}: {e}")
+        logger.error(f"External API: Network error for user {request.user_id}: {str(e)}")
+        logger.error(f"External API: Error type: {type(e).__name__}")
         raise HTTPException(
             status_code=503,
-            detail="Unable to connect to task generator service"
+            detail=f"Unable to connect to task generator service: {str(e)}"
         )
     except Exception as e:
         logger.error(f"External API: Unexpected error for user {request.user_id}: {e}")
