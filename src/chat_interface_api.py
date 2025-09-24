@@ -158,12 +158,15 @@ async def broadcast_message(message: Dict):
     if message_user_id and message.get('type') in ['agent', 'ai', 'assistant', 'system']:
         aws_messages = [{"text": message.get('content', '')}]
 
-        # Run AWS S3 delivery in background to avoid blocking
+        # Run AWS S3 delivery synchronously from thread context
         try:
-            import asyncio
-            asyncio.create_task(send_aws_message_async_safe(message_user_id, aws_messages))
+            success = send_navigator_message(message_user_id, aws_messages)
+            if success:
+                logger.info(f"✅ AWS S3 delivery successful for user {message_user_id}")
+            else:
+                logger.warning(f"⚠️ AWS S3 delivery failed for user {message_user_id} - UI delivery unaffected")
         except Exception as e:
-            logger.error(f"Failed to create AWS S3 delivery task for user {message_user_id}: {e}")
+            logger.error(f"❌ AWS S3 delivery exception for user {message_user_id}: {e} - UI delivery unaffected")
 
 def kafka_response_consumer():
     """Background thread to consume messages from Kafka response topic"""
