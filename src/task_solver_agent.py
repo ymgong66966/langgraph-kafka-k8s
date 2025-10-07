@@ -190,7 +190,6 @@ class TrackedAnthropicClient:
                 "model": self.model_id,
                 "max_tokens": kwargs.get('max_tokens', 5000),
                 "messages": anthropic_messages,
-                "temperature": self.temperature
             }
 
             # Add extended thinking configuration
