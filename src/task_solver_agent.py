@@ -168,7 +168,7 @@ class TrackedAnthropicClient:
                     session_id=self.session_id,
                     project="langgraph-agent",
                     metadata={
-                        "max_tokens": kwargs.get('max_tokens', 40000),
+                        "max_tokens": kwargs.get('max_tokens', 5000),
                         "thinking_budget": kwargs.get('thinking_budget', 2000),
                         "tools_enabled": bool(anthropic_tools),
                         "num_tools": len(anthropic_tools) if anthropic_tools else 0,
@@ -188,14 +188,14 @@ class TrackedAnthropicClient:
             # Prepare API call parameters
             api_params = {
                 "model": self.model_id,
-                "max_tokens": kwargs.get('max_tokens', 40000),
+                "max_tokens": kwargs.get('max_tokens', 5000),
                 "messages": anthropic_messages,
                 "temperature": self.temperature
             }
 
             # Add extended thinking configuration
             thinking_budget = kwargs.get('thinking_budget', 2000)
-            if thinking_budget and thinking_budget < kwargs.get('max_tokens', 4000):
+            if thinking_budget and thinking_budget < kwargs.get('max_tokens', 5000):
                 api_params["thinking"] = {
                     "type": "enabled",
                     "budget_tokens": thinking_budget
