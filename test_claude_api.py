@@ -10,10 +10,10 @@ async def main():
     
     response = await client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=40000,
+        max_tokens=3000,
         thinking={
             "type": "enabled",
-            "budget_tokens": 1000
+            "budget_tokens": 1024
         },
         messages=[{
             "role": "user",
