@@ -704,7 +704,7 @@ class TaskGenerator:
         import requests
         import json
 
-        url = "https://h9d1ldlv65.execute-api.us-east-2.amazonaws.com/dev/getuser-mcp"
+        url = "https://h9d1ldlv65.execute-api.us-east-2.amazonaws.com/prod/getuser-mcp"
 
         payload = {"user_Id": user_id}
         headers1 = {
@@ -730,7 +730,7 @@ class TaskGenerator:
             return "user is a caregiver"
         for care_recipient_id, relationship in care_recipients_ids:
             payload2 = {"recipient_Id": care_recipient_id}
-            url2 = "https://h9d1ldlv65.execute-api.us-east-2.amazonaws.com/dev/getrecipient-mcp"
+            url2 = "https://h9d1ldlv65.execute-api.us-east-2.amazonaws.com/prod/getrecipient-mcp"
             headers2 = {
                 "x-api-key": "0h5c9wlW2L8Joqk6fpJUz6NnsIjLB6Su7V62ozcd",
                 "Content-Type": "application/json"
