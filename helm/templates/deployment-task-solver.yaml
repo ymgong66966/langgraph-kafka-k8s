@@ -76,6 +76,13 @@ spec:
                   name: {{ include "langgraph-kafka.fullname" . }}-secrets
                   key: langfuse-secret-key
             {{- end }}
+            {{- if .Values.env.anthropicApiKey }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "langgraph-kafka.fullname" . }}-secrets
+                  key: anthropic-api-key
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health

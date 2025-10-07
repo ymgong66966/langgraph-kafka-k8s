@@ -112,6 +112,8 @@ env:
   langfusePublicKey: ""  # Set via --set env.langfusePublicKey="your-key" or secrets.yaml
   langfuseSecretKey: ""  # Set via --set env.langfuseSecretKey="your-key" or secrets.yaml
   langfuseHost: "https://us.cloud.langfuse.com"  # Set via --set env.langfuseHost="your-host" or secrets.yaml
+  # Anthropic API Configuration
+  anthropicApiKey: ""  # Set via --set env.anthropicApiKey="your-key" or secrets.yaml
 
 # External Secrets (for production)
 externalSecrets:

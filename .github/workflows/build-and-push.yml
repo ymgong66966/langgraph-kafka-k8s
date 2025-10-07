@@ -197,6 +197,7 @@ jobs:
           --set env.langfusePublicKey="${{ secrets.LANGFUSE_PUBLIC_KEY }}" \
           --set env.langfuseSecretKey="${{ secrets.LANGFUSE_SECRET_KEY }}" \
           --set env.langfuseHost="${{ secrets.LANGFUSE_HOST }}" \
+          --set env.anthropicApiKey="${{ secrets.ANTHROPIC_API_KEY }}" \
           --set env.kafkaBootstrapServers="langgraph-system-kafka.langgraph-system.svc.cluster.local:9092" \
           --set env.kafkaTopic="dev-langgraph-agent-events" \
           --set env.kafkaResultsTopic="dev-langgraph-task-results" \

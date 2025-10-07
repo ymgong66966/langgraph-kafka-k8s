@@ -17,14 +17,13 @@ from datetime import datetime
 import uuid
 # Import MCP LangGraph Agent
 from fastmcp import Client
-# from langchain_openai import ChatOpenAI  # Replaced with TrackedBedrockClient
+# from langchain_openai import ChatOpenAI  # Replaced with TrackedAnthropicClient
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import ToolMessage
 from typing import Literal, Annotated
 from operator import add
-import boto3
-from botocore.exceptions import ClientError, NoCredentialsError
+import anthropic
 from langfuse import Langfuse
 
 # Configure LangSmith tracing
@@ -62,72 +61,62 @@ except Exception as e:
     logger.error(f"❌ Failed to initialize Langfuse client: {e}")
     langfuse = None
 
-class TrackedBedrockClient:
+class TrackedAnthropicClient:
     """
-    BedrockClient replacement for ChatOpenAI with:
-    - AWS authentication (Kubernetes IRSA + local fallback)
+    Anthropic API client replacement for ChatOpenAI with:
+    - Anthropic API key authentication
     - Langfuse tracking
     - Extended thinking support
     - Tool use capabilities
     - ChatOpenAI-compatible interface
     """
 
-    def __init__(self, model="claude-sonnet-4", user_id=None, api_key=None, temperature=0.1, **kwargs):
-        # Bedrock configuration
-        self.region = 'us-east-2'
-        self.model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+    def __init__(self, model="claude-sonnet-4-20250514", user_id=None, api_key=None, temperature=0.1, **kwargs):
+        # Anthropic configuration
+        self.model_id = model if model else "claude-sonnet-4-20250514"
         self.temperature = temperature
         self.client = None
         self.session_id = f"task-solver-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         self.user_id = user_id
 
-        # Initialize AWS Bedrock client (from task_generator.py authentication)
-        self._initialize_client()
+        # Initialize Anthropic client
+        self._initialize_client(api_key)
 
-    def _initialize_client(self):
-        """Initialize Bedrock client using authentication method from task_generator.py"""
+    def _initialize_client(self, api_key=None):
+        """Initialize Anthropic client"""
         try:
-            k8s_token_file = os.getenv('AWS_WEB_IDENTITY_TOKEN_FILE')
+            # Get API key from parameter or environment variable
+            key = api_key or os.getenv('ANTHROPIC_API_KEY')
+            if not key:
+                raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
 
-            # Check multiple indicators for Kubernetes environment
-            is_k8s = (k8s_token_file and os.path.exists(k8s_token_file)) or \
-                     os.path.exists('/var/run/secrets/kubernetes.io/serviceaccount/token') or \
-                     os.getenv('KUBERNETES_SERVICE_HOST')
+            # Initialize async client for async operations
+            self.client = anthropic.AsyncAnthropic(api_key=key)
+            logger.info("Successfully initialized Anthropic client")
 
-            if is_k8s:
-                logger.info("Kubernetes environment detected, using default credentials")
-                self.client = boto3.client('bedrock-runtime', region_name=self.region)
-                logger.info("Successfully initialized Bedrock client with default credentials")
-            else:
-                logger.info("Local environment detected, using default AWS credentials")
-                self.client = boto3.client('bedrock-runtime', region_name=self.region)
-                logger.info("Successfully initialized Bedrock client with default credentials")
-
-        except NoCredentialsError:
-            logger.error("No AWS credentials found. Ensure AWS profile is configured or IRSA is set up.")
-            raise
-        except ClientError as e:
-            logger.error(f"Failed to initialize Bedrock client: {e}")
-            raise
         except Exception as e:
-            logger.error(f"Unexpected error initializing Bedrock client: {e}")
+            logger.error(f"Failed to initialize Anthropic client: {e}")
             raise
 
-    def _retry_with_backoff(self, func, max_retries=5, base_delay=1.0, max_delay=60.0, backoff_factor=2.0):
-        """Retry function with exponential backoff for throttling"""
+    async def _retry_with_backoff_async(self, func, max_retries=5, base_delay=1.0, max_delay=60.0, backoff_factor=2.0):
+        """Async retry function with exponential backoff for rate limiting"""
         for attempt in range(max_retries):
             try:
-                return func()
-            except ClientError as e:
-                error_code = e.response['Error']['Code']
-                if error_code == 'ThrottlingException' and attempt < max_retries - 1:
+                return await func()
+            except anthropic.RateLimitError as e:
+                if attempt < max_retries - 1:
                     delay = min(base_delay * (backoff_factor ** attempt), max_delay)
-                    logger.info(f"Throttling detected, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries}), error: {e}")
-                    time.sleep(delay)
+                    jitter = delay * 0.1  # Add 10% jitter
+                    total_delay = delay + jitter
+                    logger.info(f"Rate limit detected, retrying in {total_delay:.2f}s (attempt {attempt + 1}/{max_retries}), error: {e}")
+                    await asyncio.sleep(total_delay)
                     continue
                 else:
                     raise
-        return func()  # Final attempt
+            except Exception as e:
+                # Re-raise non-rate-limit exceptions immediately
+                raise
+        raise Exception(f"Max retries ({max_retries}) exceeded")
 
     async def ainvoke(self, messages, user_id,  **kwargs):
         """
@@ -143,13 +132,12 @@ class TrackedBedrockClient:
         # Get tools from bound client or kwargs
         tools = getattr(self, '_bound_tools', kwargs.get('tools', None))
 
-        # Convert tools from OpenAI format to Bedrock format if needed
-        bedrock_tools = None
+        # Convert tools from OpenAI format to Anthropic format if needed
+        anthropic_tools = None
         if tools:
-            bedrock_tools = []
-            logger.info(f"Converting {len(tools)} tools from OpenAI to Bedrock format")
+            anthropic_tools = []
+            logger.info(f"Converting {len(tools)} tools from OpenAI to Anthropic format")
             for i, tool in enumerate(tools):
-                # logger.info(f"Tool {i}: {tool}")
                 if tool.get("type") == "function":
                     func_def = tool.get("function", {})
                     # Ensure all required fields are valid strings
@@ -162,21 +150,19 @@ class TrackedBedrockClient:
                     if not isinstance(description, str):
                         description = str(description) if description is not None else ""
 
-                    bedrock_tool = {
+                    anthropic_tool = {
                         "name": name,
                         "description": description,
                         "input_schema": func_def.get("parameters", {})
                     }
-                    # logger.info(f"Converted to Bedrock tool: {bedrock_tool}")
-                    bedrock_tools.append(bedrock_tool)
-            # logger.info(f"Final bedrock_tools: {bedrock_tools}")
+                    anthropic_tools.append(anthropic_tool)
 
         # Create Langfuse generation for tracking (same pattern as reference)
         generation = None
         if langfuse:
             try:
                 generation = langfuse.generation(
-                    name="bedrock-claude-tools-thinking",
+                    name="anthropic-claude-tools-thinking",
                     model=self.model_id,
                     input=[self._message_to_dict(msg) for msg in messages],
                     session_id=self.session_id,
@@ -184,10 +170,8 @@ class TrackedBedrockClient:
                     metadata={
                         "max_tokens": kwargs.get('max_tokens', 40000),
                         "thinking_budget": kwargs.get('thinking_budget', 2000),
-                        "tools_enabled": bool(bedrock_tools),
-                        "num_tools": len(bedrock_tools) if bedrock_tools else 0,
-                        "region": self.region,
-
+                        "tools_enabled": bool(anthropic_tools),
+                        "num_tools": len(anthropic_tools) if anthropic_tools else 0,
                         **kwargs
                     }
                 )
@@ -198,72 +182,70 @@ class TrackedBedrockClient:
         try:
             start_time = datetime.now()
 
-            # Convert LangChain messages to Bedrock format
-            bedrock_messages = self._convert_langchain_to_bedrock_messages(messages)
+            # Convert LangChain messages to Anthropic format (reuse existing method)
+            anthropic_messages = self._convert_langchain_to_anthropic_messages(messages)
 
-            # Prepare request body (same pattern as reference)
-            request_body = {
-                "anthropic_version": "bedrock-2023-05-31",
+            # Prepare API call parameters
+            api_params = {
+                "model": self.model_id,
                 "max_tokens": kwargs.get('max_tokens', 40000),
-                "messages": bedrock_messages
+                "messages": anthropic_messages,
+                "temperature": self.temperature
             }
 
             # Add extended thinking configuration
             thinking_budget = kwargs.get('thinking_budget', 2000)
             if thinking_budget and thinking_budget < kwargs.get('max_tokens', 4000):
-                request_body["thinking"] = {
+                api_params["thinking"] = {
                     "type": "enabled",
                     "budget_tokens": thinking_budget
                 }
 
-            # Add tools if provided (same pattern as reference)
-            if bedrock_tools:
-                request_body["tools"] = bedrock_tools
-                # Don't force tool use when thinking is enabled - let Claude decide
-                # request_body["tool_choice"] = {"type": "any"}  # Conflicts with thinking mode
+            # Add tools if provided
+            if anthropic_tools:
+                api_params["tools"] = anthropic_tools
 
-            # Make Bedrock API call with retry logic
-            response = self._retry_with_backoff(
-                lambda: self.client.invoke_model(
-                    modelId=self.model_id,
-                    body=json.dumps(request_body)
-                )
-            )
+            # Make Anthropic API call with retry logic
+            async def _make_api_call():
+                return await self.client.messages.create(**api_params)
+
+            response = await self._retry_with_backoff_async(_make_api_call)
 
             end_time = datetime.now()
 
-            # Parse response
-            response_body = json.loads(response['body'].read().decode('utf-8'))
-
-            # Extract content blocks (same pattern as reference)
+            # Extract content blocks from Anthropic response
             thinking_content = []
             text_content = []
             tool_use_content = []
 
-            # Debug: Check response structure
-            if 'content' not in response_body:
-                logger.warning(f"Warning: No 'content' key in response. Keys: {list(response_body.keys())}")
-                logger.warning(f"Full response: {response_body}")
-
-            for content_block in response_body.get('content', []):
-                if content_block.get('type') == 'thinking':
+            # Process response content blocks
+            for content_block in response.content:
+                if content_block.type == 'thinking':
                     # Preserve the complete thinking block including signature
                     thinking_content.append({
-                        'thinking': content_block.get('thinking', ''),
-                        'signature': content_block.get('signature', '')
+                        'thinking': content_block.thinking,
+                        'signature': content_block.signature if hasattr(content_block, 'signature') else ''
                     })
                     logger.info(f"Thinking content: {thinking_content}")
-                elif content_block.get('type') == 'text':
-                    text_content.append(content_block.get('text', ''))
+                elif content_block.type == 'text':
+                    text_content.append(content_block.text)
                     logger.info(f"Text content: {text_content}")
-                elif content_block.get('type') == 'tool_use':
-                    tool_use_content.append(content_block)
+                elif content_block.type == 'tool_use':
+                    tool_use_content.append({
+                        'type': 'tool_use',
+                        'id': content_block.id,
+                        'name': content_block.name,
+                        'input': content_block.input
+                    })
                     logger.info(f"Tool use content: {tool_use_content}")
 
             # Calculate token usage
-            usage = response_body.get('usage', {})
+            usage = {
+                'input_tokens': response.usage.input_tokens,
+                'output_tokens': response.usage.output_tokens
+            }
 
-            # Log successful response to Langfuse (same pattern as reference)
+            # Log successful response to Langfuse
             if generation:
                 try:
                     generation.end(
@@ -271,7 +253,6 @@ class TrackedBedrockClient:
                             "thinking": thinking_content,
                             "text": text_content,
                             "tool_use": tool_use_content,
-                            "full_response": response_body,
                             "user_id": user_id
                         },
                         usage={
@@ -284,14 +265,14 @@ class TrackedBedrockClient:
                             "thinking_tokens": sum(len(tb['thinking'].split()) for tb in thinking_content) if thinking_content else 0,
                             "text_tokens": len(' '.join(text_content).split()) if text_content else 0,
                             "has_tool_use": bool(tool_use_content),
-                            "stop_reason": response_body.get('stop_reason')
+                            "stop_reason": response.stop_reason if hasattr(response, 'stop_reason') else None
                         }
                     )
                 except Exception as e:
                     logger.warning(f"Failed to end Langfuse generation: {e}")
 
             # Create AIMessage with tool calls (LangChain compatible)
-            ai_message = self._create_ai_message_from_bedrock_response(
+            ai_message = self._create_ai_message_from_anthropic_response(
                 thinking_content, text_content, tool_use_content
             )
 
@@ -308,20 +289,21 @@ class TrackedBedrockClient:
                 except Exception as langfuse_error:
                     logger.warning(f"Failed to log error to Langfuse: {langfuse_error}")
 
-            logger.error(f"Error in TrackedBedrockClient.ainvoke: {e}")
+            logger.error(f"Error in TrackedAnthropicClient.ainvoke: {e}")
             raise
 
     def bind(self, tools=None, **kwargs):
         """
         Return a bound client with tools (for LangChain compatibility)
         """
-        bound_client = TrackedBedrockClient(
+        bound_client = TrackedAnthropicClient(
             model=self.model_id,
             temperature=self.temperature
         )
         bound_client._bound_tools = tools or []
         bound_client._bound_kwargs = kwargs
         bound_client.session_id = self.session_id
+        bound_client.client = self.client  # Share the same client instance
         return bound_client
 
     def _message_to_dict(self, message):
@@ -337,13 +319,13 @@ class TrackedBedrockClient:
                 "content": str(message)
             }
 
-    def _convert_langchain_to_bedrock_messages(self, messages):
-        """Convert LangChain messages to Bedrock format, preserving thinking blocks"""
-        bedrock_messages = []
+    def _convert_langchain_to_anthropic_messages(self, messages):
+        """Convert LangChain messages to Anthropic format, preserving thinking blocks"""
+        anthropic_messages = []
 
         for message in messages:
             if isinstance(message, HumanMessage):
-                bedrock_messages.append({
+                anthropic_messages.append({
                     "role": "user",
                     "content": message.content
                 })
@@ -352,9 +334,9 @@ class TrackedBedrockClient:
                 content = []
 
                 # Check if message has thinking blocks in its content (preserved from previous turns)
-                if hasattr(message, '_bedrock_content') and message._bedrock_content:
-                    # Use preserved bedrock content structure
-                    content = message._bedrock_content
+                if hasattr(message, '_anthropic_content') and message._anthropic_content:
+                    # Use preserved anthropic content structure
+                    content = message._anthropic_content
                 else:
                     # Regular text content
                     if message.content:
@@ -373,13 +355,13 @@ class TrackedBedrockClient:
                                 "input": tool_call.get("args", {})
                             })
 
-                bedrock_messages.append({
+                anthropic_messages.append({
                     "role": "assistant",
                     "content": content if content else [{"type": "text", "text": str(message.content)}]
                 })
             elif message.get('content', None)!=None:
                 if message.get('content')[0].get('type')=='tool_result':
-                # Handle ToolMessage with proper tool_result format for Bedrock
+                # Handle ToolMessage with proper tool_result format for Anthropic
                     tool_result_list = []
                     for tool_result in message.get('content'):
                         tool_result_list.append({
@@ -387,22 +369,22 @@ class TrackedBedrockClient:
                             "tool_use_id": str(tool_result.get('tool_use_id')),
                             "content": tool_result.get('content')
                         })
-                    bedrock_messages.append({
+                    anthropic_messages.append({
                         "role": "user",
                         "content": tool_result_list
                     })
             else:
                 # Handle other message types
                 logger.info(f"Other message type: {message}")
-                bedrock_messages.append({
+                anthropic_messages.append({
                     "role": "user",
                     "content": str(message.content) if hasattr(message, 'content') else str(message)
                 })
-        logger.info(f"Bedrock messages: {bedrock_messages}")
-        return bedrock_messages
+        logger.info(f"Anthropic messages: {anthropic_messages}")
+        return anthropic_messages
 
-    def _create_ai_message_from_bedrock_response(self, thinking_content, text_content, tool_use_content):
-        """Create AIMessage from Bedrock response, preserving thinking blocks for next turn"""
+    def _create_ai_message_from_anthropic_response(self, thinking_content, text_content, tool_use_content):
+        """Create AIMessage from Anthropic response, preserving thinking blocks for next turn"""
         # Combine text content
         # combined_text = ' '.join(text_content).strip()
 
@@ -422,14 +404,14 @@ class TrackedBedrockClient:
                 })
             ai_message.tool_calls = tool_calls
 
-        # CRITICAL: Preserve the complete Bedrock content structure for next turn
-        # AWS Bedrock requires thinking blocks to come FIRST when thinking is enabled
+        # CRITICAL: Preserve the complete Anthropic content structure for next turn
+        # Anthropic API requires thinking blocks to come FIRST when thinking is enabled
         if thinking_content or tool_use_content or len(text_content)>0:
-            bedrock_content = []
+            anthropic_content = []
 
-            # Add thinking blocks FIRST (required by AWS Bedrock)
+            # Add thinking blocks FIRST (required by Anthropic API)
             for thinking_block in thinking_content:
-                bedrock_content.append({
+                anthropic_content.append({
                     "type": "thinking",
                     "thinking": thinking_block['thinking'],
                     "signature": thinking_block['signature']
@@ -437,18 +419,18 @@ class TrackedBedrockClient:
 
             # Add text content
             for text in text_content:
-                bedrock_content.append({
+                anthropic_content.append({
                     "type": "text",
                     "text": text
                 })
 
             # Add tool use content
             for tool_block in tool_use_content:
-                bedrock_content.append(tool_block)
+                anthropic_content.append(tool_block)
 
             # Store the complete structure for next turn
-            ai_message._bedrock_content = bedrock_content
-            ai_message.content = bedrock_content
+            ai_message._anthropic_content = anthropic_content
+            ai_message.content = anthropic_content
 
         # Log thinking process
         if thinking_content:
@@ -512,10 +494,9 @@ class TaskSolverAgent:
         self.max_tool_calls = 4
         self.mcp_server_url = "http://a7a09ec61615e46a7892d050e514c11e-1977986439.us-east-2.elb.amazonaws.com/mcp"
         
-        # Initialize LLM - Replace ChatOpenAI with TrackedBedrockClient
-        self.llm = TrackedBedrockClient(
-            model="claude-sonnet-4",
-            
+        # Initialize LLM - Using TrackedAnthropicClient
+        self.llm = TrackedAnthropicClient(
+            model="claude-sonnet-4-20250514",
             temperature=0.1
         )
         self.memory = MemorySaver()
@@ -697,8 +678,8 @@ Decision:"""
 
         # Use LLM to make routing decision
         try:
-            routing_llm = TrackedBedrockClient(
-                model="claude-sonnet-4",  # Use Claude 4 Sonnet for routing decisions
+            routing_llm = TrackedAnthropicClient(
+                model="claude-sonnet-4-20250514",  # Use Claude 4 Sonnet for routing decisions
                 temperature=0.1
             )
             

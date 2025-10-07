@@ -15,119 +15,82 @@ import requests
 from kafka import KafkaProducer
 from kafka.errors import KafkaError
 from fastmcp import Client
-import boto3
-from botocore.exceptions import ClientError, NoCredentialsError
+import anthropic
+import asyncio
 from loguru import logger
-class BedrockClient:
-    """AWS Bedrock client for Kubernetes pods with role assumption"""
+class AnthropicClient:
+    """Anthropic API client for Claude"""
     def __init__(self):
-        self.region = 'us-east-2'
-        self.model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
-        self.client = None
-        self._initialize_client()
+        self.model_id = "claude-sonnet-4-20250514"
+        api_key = os.getenv('ANTHROPIC_API_KEY')
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
+        self.client = anthropic.Anthropic(api_key=api_key)
+        logger.info("Successfully initialized Anthropic client")
 
-    def _initialize_client(self):
-        """Initialize Bedrock client using withcare-dev profile"""
-        try:
-            k8s_token_file = os.getenv('AWS_WEB_IDENTITY_TOKEN_FILE')
-            
-            # Check multiple indicators for Kubernetes environment
-            is_k8s = (k8s_token_file and os.path.exists(k8s_token_file)) or \
-                     os.path.exists('/var/run/secrets/kubernetes.io/serviceaccount/token') or \
-                     os.getenv('KUBERNETES_SERVICE_HOST')
-            
-            if is_k8s:
-                self.client = boto3.client('bedrock-runtime', region_name=self.region)
-                logger.info("Successfully initialized Bedrock client with default credentials")
-            else:
-                logger.info("Local environment detected, using default AWS credentials")
-                self.client = boto3.client('bedrock-runtime', region_name=self.region)
-                logger.info("Successfully initialized Bedrock client with default credentials")
-            
-        except NoCredentialsError:
-            logger.error("No AWS credentials found. Ensure AWS profile is configured or IRSA is set up.")
-            raise
-        except ClientError as e:
-            logger.error(f"Failed to initialize Bedrock client: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error initializing Bedrock client: {e}")
-            raise
-    
     def _retry_with_backoff(self, func, max_retries=5, base_delay=1.0, max_delay=60.0, backoff_factor=2.0):
         """Retry function with exponential backoff for throttling"""
         for attempt in range(max_retries):
             try:
                 return func()
-            except ClientError as e:
-                error_code = e.response['Error']['Code']
-                
-                if error_code == 'ThrottlingException' and attempt < max_retries - 1:
+            except anthropic.RateLimitError as e:
+                if attempt < max_retries - 1:
                     # Calculate delay with jitter
                     delay = min(base_delay * (backoff_factor ** attempt), max_delay)
                     jitter = random.uniform(0.1, 0.3) * delay
                     total_delay = delay + jitter
-                    
-                    logger.warning(f"Throttling detected, retrying in {total_delay:.2f}s (attempt {attempt + 1}/{max_retries})")
+
+                    logger.warning(f"Rate limit detected, retrying in {total_delay:.2f}s (attempt {attempt + 1}/{max_retries})")
                     time.sleep(total_delay)
                     continue
                 else:
-                    # Re-raise for non-throttling errors or final attempt
+                    # Re-raise on final attempt
                     raise
             except Exception as e:
-                # Re-raise non-ClientError exceptions immediately
+                # Re-raise non-rate-limit exceptions immediately
                 raise
-        
+
         # This should never be reached, but just in case
         raise Exception(f"Max retries ({max_retries}) exceeded")
 
     def converse(self, messages, max_tokens=1000, temperature=0.2, top_p=0.9):
-        """Send messages to Bedrock model and get response using invoke_model API with retry logic"""
+        """Send messages to Anthropic API and get response with retry logic"""
         if not self.client:
-            raise RuntimeError("Bedrock client not initialized")
+            raise RuntimeError("Anthropic client not initialized")
 
         def _make_request():
-            # Format messages for Bedrock invoke_model API (following AWS docs)
-            bedrock_messages = []
+            # Format messages for Anthropic API
+            anthropic_messages = []
             for msg in messages:
-                bedrock_messages.append({
+                anthropic_messages.append({
                     "role": msg["role"],
-                    "content": msg["content"]  # Simple string format, not array
+                    "content": msg["content"]
                 })
 
-            # Create request body following AWS documentation format
-            body = json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": max_tokens,
-                "messages": bedrock_messages,
-                "temperature": temperature,
-                "top_p": top_p
-            })
-
-            # Use invoke_model instead of converse
-            response = self.client.invoke_model(
-                body=body,
-                modelId=self.model_id
+            # Make API call
+            response = self.client.messages.create(
+                model=self.model_id,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                messages=anthropic_messages
             )
 
-            # Parse response body
-            response_body = json.loads(response.get('body').read())
-
-            # Extract text from response (Claude format)
-            if 'content' in response_body and len(response_body['content']) > 0:
-                return response_body['content'][0]['text']
+            # Extract text from response
+            if response.content and len(response.content) > 0:
+                # Get first text block
+                for block in response.content:
+                    if block.type == 'text':
+                        return block.text
+                return "Error: No text content in response"
             else:
-                logger.error(f"Unexpected response format: {response_body}")
+                logger.error(f"Unexpected response format: {response}")
                 return "Error: Unexpected response format"
 
         try:
             return self._retry_with_backoff(_make_request)
-        except ClientError as e:
-            error_code = e.response['Error']['Code']
-            if error_code == 'AccessDeniedException':
-                logger.error(f"Access denied to Bedrock model {self.model_id}: {e}")
-            else:
-                logger.error(f"Bedrock API error: {e}")
+        except anthropic.APIError as e:
+            logger.error(f"Anthropic API error: {e}")
             raise
         except Exception as e:
             logger.error(f"Unexpected error in converse: {e}")
@@ -183,12 +146,12 @@ except Exception as e:
     logger.error(f"❌ Failed to initialize Langfuse client: {e}")
     langfuse = None
 
-class TrackedBedrockClient(BedrockClient):
-    """BedrockClient with Langfuse tracking"""
+class TrackedAnthropicClient(AnthropicClient):
+    """AnthropicClient with Langfuse tracking"""
 
     def __init__(self, session_id: str = None, agent_role: str = None, user_id: str = None):
         super().__init__()
-        self.session_id = session_id or f"bedrock-session-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        self.session_id = session_id or f"anthropic-session-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         self.agent_role = agent_role or "unknown-agent"
         self.user_id = user_id or "anonymous"
 
@@ -199,14 +162,13 @@ class TrackedBedrockClient(BedrockClient):
         if langfuse:
             try:
                 generation = langfuse.generation(
-                    name=f"bedrock-{self.agent_role}-simple-chat",
+                    name=f"anthropic-{self.agent_role}-simple-chat",
                     model=self.model_id,
                     input=prompt,
                     session_id=self.session_id,
                     user_id=self.user_id,
                     metadata={
                         "max_tokens": max_tokens,
-                        "region": self.region,
                         "system": "langgraph-kafka",
                         "component": "task-generator",
                         **kwargs
@@ -220,7 +182,7 @@ class TrackedBedrockClient(BedrockClient):
             # Call the parent converse method directly
             start_time = datetime.now()
             messages = [{"role": "user", "content": prompt}]
-            response = super(TrackedBedrockClient, self).converse(messages, max_tokens=max_tokens)
+            response = super(TrackedAnthropicClient, self).converse(messages, max_tokens=max_tokens)
             end_time = datetime.now()
 
             # Calculate approximate token counts (rough estimation)
@@ -266,7 +228,7 @@ class TrackedBedrockClient(BedrockClient):
         if langfuse:
             try:
                 generation = langfuse.generation(
-                    name=f"bedrock-{self.agent_role}-async-chat",
+                    name=f"anthropic-{self.agent_role}-async-chat",
                     model=self.model_id,
                     input=prompt,
                     session_id=self.session_id,
@@ -274,7 +236,6 @@ class TrackedBedrockClient(BedrockClient):
                     metadata={
                         "max_tokens": max_tokens,
                         "temperature": temperature,
-                        "region": self.region,
                         "system": "langgraph-kafka",
                         "component": "task-generator",
                         **kwargs
@@ -288,9 +249,8 @@ class TrackedBedrockClient(BedrockClient):
             # Call the parent converse method in async context
             start_time = datetime.now()
             messages = [{"role": "user", "content": prompt}]
-            import asyncio
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, lambda: super(TrackedBedrockClient, self).converse(messages, max_tokens=max_tokens, temperature=temperature))
+            response = await loop.run_in_executor(None, lambda: super(TrackedAnthropicClient, self).converse(messages, max_tokens=max_tokens, temperature=temperature))
             end_time = datetime.now()
 
             # Calculate approximate token counts
@@ -692,25 +652,25 @@ class TaskGenerator:
                 acks='all'
             )
         
-        # Test Bedrock connectivity during initialization
-        # self._test_bedrock_connectivity()
+        # Test Anthropic connectivity during initialization
+        # self._test_anthropic_connectivity()
 
-    def _test_bedrock_connectivity(self):
-        """Test Bedrock connectivity and log results for verification"""
+    def _test_anthropic_connectivity(self):
+        """Test Anthropic API connectivity and log results for verification"""
         try:
-            logger.info("🧪 BEDROCK TEST: Initializing TrackedBedrockClient...")
-            bedrock = TrackedBedrockClient(
-                session_id="bedrock-connectivity-test",
+            logger.info("🧪 ANTHROPIC TEST: Initializing TrackedAnthropicClient...")
+            anthropic_client = TrackedAnthropicClient(
+                session_id="anthropic-connectivity-test",
                 agent_role="connectivity-test",
                 user_id="system"
             )
-            test_response = bedrock.simple_chat("Say 'Bedrock test successful' in one sentence.")
+            test_response = anthropic_client.simple_chat("Say 'Anthropic test successful' in one sentence.")
 
-            logger.info(f"✅ BEDROCK TEST SUCCESS: {test_response}")
+            logger.info(f"✅ ANTHROPIC TEST SUCCESS: {test_response}")
             logger.info("🎉 Claude model is accessible and working with Langfuse tracking!")
 
         except Exception as e:
-            logger.error(f"❌ BEDROCK TEST FAILED: {e}")
+            logger.error(f"❌ ANTHROPIC TEST FAILED: {e}")
             logger.error("🚨 Claude model is NOT accessible in this environment!")
 
     def send_to_kafka(self, task_data: dict) -> bool:
@@ -830,8 +790,8 @@ async def task_generator_node(state: AgentState) -> dict:
             elif isinstance(msg, AIMessage):
                 chat_history += f"Assistant: {msg.content}\n"
         
-        # Use Claude 4 Sonnet via TrackedBedrockClient for delegation response with Langfuse tracking
-        bedrock_client = TrackedBedrockClient(
+        # Use Claude 4 Sonnet via TrackedAnthropicClient for delegation response with Langfuse tracking
+        anthropic_client = TrackedAnthropicClient(
             session_id=f"task-gen-{user_id or 'anonymous'}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
             agent_role="task-generator",
             user_id=user_id or "anonymous"
@@ -863,7 +823,7 @@ async def task_generator_node(state: AgentState) -> dict:
                 user_question=user_question,
                 mcp_tool_context=tool_information_nice_print
             )
-            planner_plan = await bedrock_client.async_chat(planner_prompt, max_tokens=2000, temperature=0.1)
+            planner_plan = await anthropic_client.async_chat(planner_prompt, max_tokens=2000, temperature=0.1)
             logger.info(f"Planner response generated: {planner_plan[:100]}...")
 
             # Generate task_id for this delegation response
@@ -876,7 +836,7 @@ async def task_generator_node(state: AgentState) -> dict:
                 user_question=user_question,
                 planner_plan=planner_plan
             )
-            delegate_response_content = await bedrock_client.async_chat(delegation_prompt, max_tokens=1000, temperature=0.1)
+            delegate_response_content = await anthropic_client.async_chat(delegation_prompt, max_tokens=1000, temperature=0.1)
             # Format response for chat interface (send to results topic)
             if delegate_response_content.lower() != "no response needed":
                 # Prepare task data for the new format
@@ -953,7 +913,7 @@ async def filter_node(state: AgentState) -> dict:
     """Router node to determine which agent to use"""
     messages = state.get('messages', [])
     user_id = state.get('user_id', 'anonymous')
-    bedrock_client = TrackedBedrockClient(
+    anthropic_client = TrackedAnthropicClient(
             session_id=f"task-gen-{user_id or 'anonymous'}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
             agent_role="task-generator",
             user_id=user_id or "anonymous"
@@ -962,7 +922,7 @@ async def filter_node(state: AgentState) -> dict:
     try:
         # Get routing decision from Claude 4 Sonnet
         router_prompt = FILTER_AGENT_PROMPT.format(user_message=user_message)
-        response_content = await bedrock_client.async_chat(router_prompt, max_tokens=500, temperature=0.1)
+        response_content = await anthropic_client.async_chat(router_prompt, max_tokens=500, temperature=0.1)
         logger.info(f"Filter response: {response_content}")
 
         if response_content == "HUMAN" or response_content == "ROUTER":
@@ -994,13 +954,13 @@ async def followup_question_node(state: AgentState) -> dict:
     user_question = messages[-1].content
 
     followup_question_prompt = FOLLOWUP_QUESTION_PROMPT.format(user_info=user_info, user_question=user_question, chat_history=chat_history)
-    bedrock_client = TrackedBedrockClient(
+    anthropic_client = TrackedAnthropicClient(
             session_id=f"followup-question-{user_id or 'anonymous'}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
             agent_role="followup-question",
             user_id=user_id or "anonymous"
         )
     try:
-        response_content = await bedrock_client.async_chat(followup_question_prompt, max_tokens=500, temperature=0.1)
+        response_content = await anthropic_client.async_chat(followup_question_prompt, max_tokens=500, temperature=0.1)
         response_content_json = json.loads(response_content)
         logger.info(f"Follow-up question response: {response_content}")
         followup_response = {
@@ -1077,10 +1037,10 @@ async def router_node(state: AgentState) -> dict:
 
     logger.info(f"Full chat history for routing:\n{chat_history[:500]}...")
 
-    # Use Claude 4 Sonnet via TrackedBedrockClient for routing decision with Langfuse tracking
+    # Use Claude 4 Sonnet via TrackedAnthropicClient for routing decision with Langfuse tracking
     # Extract user_id from state if available
     user_id = state.get('user_id', 'anonymous')
-    bedrock_client = TrackedBedrockClient(
+    anthropic_client = TrackedAnthropicClient(
         session_id=f"router-{user_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
         agent_role="router",
         user_id=user_id
@@ -1089,7 +1049,7 @@ async def router_node(state: AgentState) -> dict:
     try:
         # Get routing decision from Claude 4 Sonnet
         router_prompt = ROUTER_AGENT_PROMPT.format(chat_history=chat_history)
-        response_content = await bedrock_client.async_chat(router_prompt, max_tokens=500, temperature=0.1)
+        response_content = await anthropic_client.async_chat(router_prompt, max_tokens=500, temperature=0.1)
         logger.info(f"Router response: {response_content}")
 
         # Parse JSON response
@@ -1177,8 +1137,8 @@ async def frontend_agent_node(state: AgentState) -> dict:
         elif isinstance(msg, AIMessage):
             chat_history += f"Assistant: {msg.content}\n"
 
-    # Use Claude 4 Sonnet via TrackedBedrockClient for frontend response with Langfuse tracking
-    bedrock_client = TrackedBedrockClient(
+    # Use Claude 4 Sonnet via TrackedAnthropicClient for frontend response with Langfuse tracking
+    anthropic_client = TrackedAnthropicClient(
         session_id=f"frontend-{user_id or 'anonymous'}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
         agent_role="frontend-agent",
         user_id=user_id or "anonymous"
@@ -1190,7 +1150,7 @@ async def frontend_agent_node(state: AgentState) -> dict:
             chat_history=chat_history,
             user_info=user_info
         )
-        response_content = await bedrock_client.async_chat(frontend_prompt, max_tokens=1000, temperature=0.3)
+        response_content = await anthropic_client.async_chat(frontend_prompt, max_tokens=1000, temperature=0.3)
 
         logger.info(f"Frontend agent response: {response_content[:100]}...")
 
