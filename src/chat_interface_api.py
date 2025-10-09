@@ -65,7 +65,7 @@ def send_navigator_message(user_id: str, messages: List[Dict[str, str]]) -> bool
     Returns:
         bool: True if successful, False otherwise
     """
-    url = "https://h9d1ldlv65.execute-api.us-east-2.amazonaws.com/dev/delivernavigatormessage"
+    url = "https://tarz0uu2n5.execute-api.us-east-2.amazonaws.com/prod/delivernavigatormessage"
 
     headers = {
         "Content-Type": "application/json",
