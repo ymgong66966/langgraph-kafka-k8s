@@ -3,7 +3,8 @@ from fastmcp import Client
 async def test_mcp_servers():
     client = Client({
         "enhanced_mcp": {
-            "url": "http://a7a09ec61615e46a7892d050e514c11e-1977986439.us-east-2.elb.amazonaws.com/mcp",
+            "url": "http://a3490b37dcce24b6aa32c67158ce1c5b-285867456.us-east-2.elb.amazonaws.com/mcp",
+            # "http://a7a09ec61615e46a7892d050e514c11e-1977986439.us-east-2.elb.amazonaws.com/mcp",
             "transport": "streamable-http"
             }
         })

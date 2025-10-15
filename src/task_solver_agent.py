@@ -491,7 +491,7 @@ class TaskSolverAgent:
         # MCP Agent configuration
         self.openai_api_key = OPENAI_API_KEY
         self.max_tool_calls = 4
-        self.mcp_server_url = "http://a7a09ec61615e46a7892d050e514c11e-1977986439.us-east-2.elb.amazonaws.com/mcp"
+        self.mcp_server_url = "http://a3490b37dcce24b6aa32c67158ce1c5b-285867456.us-east-2.elb.amazonaws.com/mcp"
         
         # Initialize LLM - Using TrackedAnthropicClient
         self.llm = TrackedAnthropicClient(

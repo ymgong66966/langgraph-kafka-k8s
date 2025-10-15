@@ -796,7 +796,7 @@ async def task_generator_node(state: AgentState) -> dict:
             agent_role="task-generator",
             user_id=user_id or "anonymous"
         )
-        mcp_server_url = "http://a7a09ec61615e46a7892d050e514c11e-1977986439.us-east-2.elb.amazonaws.com/mcp"
+        mcp_server_url = "http://a3490b37dcce24b6aa32c67158ce1c5b-285867456.us-east-2.elb.amazonaws.com/mcp"
         client = Client({
             "enhanced_mcp": {
                 "url": mcp_server_url,

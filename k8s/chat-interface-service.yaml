@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-interface-service
+  namespace: langgraph
+  labels:
+    app: chat-interface
+    service: chat-api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/component: chat-interface
+  ports:
+    - name: http
+      port: 8003
+      targetPort: 8003
+      protocol: TCP
