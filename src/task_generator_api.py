@@ -11,7 +11,6 @@ from kafka.errors import KafkaError
 from contextlib import asynccontextmanager
 from task_generator import (
     generate_task_from_messages, 
-    generate_task_from_history,
     TaskGenerator as TaskGen
 )
 

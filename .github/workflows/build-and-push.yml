@@ -125,40 +125,22 @@ jobs:
         helm dependency update
         cd ..
     
-    - name: Clean up previous deployment
+    - name: Prepare for deployment
       run: |
-        echo "🧹 Cleaning up previous deployment..."
+        echo "🔧 Preparing for deployment..."
         
-        # Remove existing Helm releases from both namespaces
-        helm uninstall langgraph-kafka -n langgraph --ignore-not-found || true
-        helm uninstall langgraph-kafka -n langgraph-system --ignore-not-found || true
+        # Create namespaces if they don't exist (will be used in next step)
+        kubectl create namespace langgraph --dry-run=client -o yaml | kubectl apply -f -
+        kubectl create namespace langgraph-system --dry-run=client -o yaml | kubectl apply -f -
         
-        # Delete namespaces to ensure completely clean state
-        kubectl delete namespace langgraph --ignore-not-found --timeout=120s || true
-        kubectl delete namespace langgraph-system --ignore-not-found --timeout=120s || true
-        
-        # Wait for namespace deletion to complete
-        echo "⏳ Waiting for namespace cleanup..."
-        sleep 30
-        
-        # Force cleanup any remaining serviceaccounts in specific namespaces
-        kubectl delete serviceaccounts langgraph-kafka -n langgraph --ignore-not-found || true
-        kubectl delete serviceaccounts langgraph-kafka -n langgraph-system --ignore-not-found || true
-        kubectl delete serviceaccounts langgraph-kafka-provisioning -n langgraph --ignore-not-found || true
-        kubectl delete serviceaccounts langgraph-kafka-provisioning -n langgraph-system --ignore-not-found || true
-        
-        echo "✅ Cleanup completed"
+        echo "✅ Namespaces ready"
     
     - name: Deploy to Kubernetes
       run: |
-        echo "🚀 Starting clean deployment..."
+        echo "🚀 Starting deployment..."
         
         # Extract short SHA for image tag
         SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-        
-        # Create namespaces if they don't exist
-        kubectl create namespace langgraph --dry-run=client -o yaml | kubectl apply -f -
-        kubectl create namespace langgraph-system --dry-run=client -o yaml | kubectl apply -f -
         
         # Deploy external Kafka first
         echo "📦 Deploying external Kafka..."
