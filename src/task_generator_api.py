@@ -9,8 +9,6 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from kafka import KafkaProducer, KafkaConsumer
 from kafka.errors import KafkaError
 from contextlib import asynccontextmanager
-
-# Import functions from task_generator.py
 from task_generator import (
     generate_task_from_messages, 
     generate_task_from_history,
