@@ -34,6 +34,7 @@ class TaskRequest(BaseModel):
     user_id: Optional[str] = None
     user_info: Optional[str] = None
     context: Optional[str] = None
+    needs_human: Optional[bool] = False  # Track if user needs human support
 
 class TaskResponse(BaseModel):
     agent_used: str
@@ -41,6 +42,7 @@ class TaskResponse(BaseModel):
     task_id: Optional[str] = None
     kafka_sent: bool
     status: str = "processed"
+    needs_human: Optional[bool] = False  # Return updated needs_human state
 
 # Global producer instance
 producer = None
@@ -281,29 +283,34 @@ async def generate_task(request: TaskRequest):
             messages=messages,
             user_id=request.user_id,
             user_info=request.user_info,
-            mock=False  # Set to False for production use
+            mock=False,  # Set to False for production use
+            needs_human=request.needs_human  # Pass needs_human state
         )
-        
+
         logger.info(f"Task generator result: {result}")
-        
+
         # Extract processed data
         processed_data = result.get("processed_data", {})
-        
+
         if "error" in processed_data:
             raise HTTPException(status_code=500, detail=processed_data["error"])
-        
+
         # Create response based on the result
         agent_used = processed_data.get("agent_used", "unknown")
         response_content = processed_data.get("response", "")
         task_id = processed_data.get("task_id", "")
         kafka_sent = processed_data.get("kafka_sent", False)
-        
+        updated_needs_human = processed_data.get("needs_human", request.needs_human)  # Get updated state
+
+        logger.info(f"Updated needs_human state: {updated_needs_human}")
+
         return TaskResponse(
             agent_used=agent_used,
             response=response_content,
             task_id=task_id,
             kafka_sent=kafka_sent,
-            status="processed"
+            status="processed",
+            needs_human=updated_needs_human  # Return updated needs_human state
         )
         
     except Exception as e:

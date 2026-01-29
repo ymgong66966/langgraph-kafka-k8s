@@ -328,32 +328,137 @@ KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'dev-langgraph-agent-events')
 KAFKA_RESULTS_TOPIC = os.getenv('KAFKA_RESULTS_TOPIC', 'dev-langgraph-task-results')
 # OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')  # No longer needed - using BedrockClient instead
 FILTER_AGENT_PROMPT = """
-You can only output one of these two strings: 1: "ROUTER" 2: "HUMAN". 
-Your input is a string that is the user's message. 
-If the user's message is exactly one of the following questions, output "HUMAN". IMPORTANT: the user's message has to be exactly one of the following questions for you to output "HUMAN", otherwise output "ROUTER": 
-I need to schedule a consultation with a neurologist.
-Can you help me hire an in-home caregiver?
-I need to arrange transportation for my dad’s appointment.
-Please remind me to call Medicaid about our application.
-Help me coordinate moving mom into assisted living.
-I need to find and book respite care for next month.
-Can you schedule a follow-up with the rehab center?
-Can you tell me which which medications shouldn't be taken together?
-Help me organize a family meeting about care plans.
-Can you set up a time to interview home care agencies?
-I need to request medical records from the hospital.
-Please add a task to apply for the VA caregiver program.
-Can you call the pharamacy and check on my prescription?
-I need to arrange installation of safety grab bars.
-Help me coordinate meal deliveries for my dad.
-Can you help determine what's covered by insurance?
-Can you call my insurance to ask why they denied my claim?
-######################################################
-If the user's message is not exactly one of the above questions, output "ROUTER". 
-IMPORTANT, do not output any other string such as "output", "result". Output either "ROUTER" or "HUMAN".
+You are a filter agent that determines if a user's message requires human support (social worker intervention).
 
-Here is the user message: {user_message}
-"""
+Your task: Output ONLY one of these two strings: "ROUTER" or "HUMAN"
+
+Output "HUMAN" if the user's message is semantically similar to ANY of the following types of requests:
+
+**Scheduling & Appointments:**
+- Schedule consultation with neurologist/specialist
+- Book appointment with memory care specialist/primary care doctor
+- Set up follow-up visits
+- Schedule rides for therapy/appointments
+- Coordinate ongoing medical transportation
+
+**Hiring & Interviewing:**
+- Help hire in-home caregiver
+- Interview home care agencies
+- Screen caregivers and set up interviews
+
+**Phone Calls & Advocacy:**
+- Call provider/pharmacy on behalf
+- Speak to insurance company on behalf
+- Follow up with agencies/providers
+- Advocate with providers
+
+**Reminders & Follow-ups:**
+- Remind to call Medicaid/insurance
+- Call Medicaid on behalf
+- Follow up with insurance about paperwork
+- Track down missing test results
+
+**Housing & Moving:**
+- Coordinate moving into assisted living
+- Set up tours at facilities
+- Finalize housing placement
+- Coordinate facility tours
+- Prepare for housing interviews
+- Organize moving company/logistics
+
+**Respite Care:**
+- Find and book respite care
+- Apply for respite care grants
+- Compare short-term respite options
+
+**Medication Management:**
+- Tell which medications shouldn't be taken together
+- Call pharmacy to check prescription
+- Clarify medication instructions with doctor
+
+**Family Coordination:**
+- Organize family meeting about care plans
+- Coordinate schedules with siblings
+- Help align family on next steps
+
+**Medical Records & Documentation:**
+- Request medical records from hospital
+- Transfer records to new provider
+
+**Insurance & Claims:**
+- Call insurance about denied claims
+- Help appeal denied procedures
+- Review bills and flag errors
+
+**Paperwork & Applications:**
+- Help fill out FMLA paperwork
+- Submit FMLA forms to HR
+- Track FMLA claim deadlines
+- Gather documents for applications
+- Complete and review applications
+- Check if anything missing from paperwork
+
+**Financial Assistance:**
+- Help apply for financial assistance programs
+- Identify qualifying grants/subsidies
+- Review expenses for cost-saving programs
+- Compare insurance policies
+- Understand coverage differences
+- Assist with application process
+
+**Disability & VA Benefits:**
+- Help with Social Security disability paperwork
+- Follow up on disability claims
+- Prepare for disability appeals
+- Apply for VA caregiver benefits
+- Connect with veteran support officer
+- Assist with VA insurance appeals
+
+**Home Modifications & Services:**
+- Arrange home safety assessment
+- Monitor progress on home modifications
+- Choose meal delivery service
+- Arrange grocery delivery
+- Request medical equipment
+- Manage referrals and approvals
+
+**Regular Check-ins & Monitoring:**
+- Check in monthly and report back
+- Assess caregiver/recipient status regularly
+- Update care circle on progress
+
+**End-of-Life & Grief:**
+- Plan for discharge from rehab
+- Plan end-of-life care
+- Assist with funeral arrangements
+- Find grief counseling resources
+
+**Authorization & Representation:**
+- Act as authorized unpaid representative for claims
+- Be listed as representative on cases
+- Communicate with Social Security on behalf
+
+**Employee Benefits & Mental Health:**
+- Understand employee benefits for caregiving
+- Verify dependent eligibility with employer
+- Find and book therapist covered by insurance
+- Coordinate mental health care
+- Follow up with mental health providers
+
+**Task Management:**
+- Add appointments to calendar
+- Track deadlines and reminders
+- Organize tasks to prevent things falling through
+
+IMPORTANT: Match based on SEMANTIC SIMILARITY, not exact wording. If the user's intent matches any category above, output "HUMAN".
+
+If the user's message does NOT match any of the above categories, output "ROUTER".
+
+CRITICAL: Output ONLY "ROUTER" or "HUMAN" - no other text, no explanation, no quotes, no formatting.
+
+User message: {user_message}
+
+Your output:"""
 
 ROUTER_AGENT_PROMPT = """
 You are a router agent that determines which agent to use based on the user's input. Here is the chat history: {chat_history}. 
@@ -640,6 +745,7 @@ class AgentState(TypedDict):
     agent: Optional[str]
     mock: Optional[bool]
     filter_result: Optional[str]
+    needs_human: Optional[bool]  # Track if user needs human support
 
 class TaskGenerator:
     def __init__(self, mock: bool = False):
@@ -879,7 +985,8 @@ async def task_generator_node(state: AgentState) -> dict:
                         **task_data,
                         "delegation_response": filler_response["content"],
                         "delegation_task_id": delegation_task_id,
-                        "delegation_sent": delegation_success
+                        "delegation_sent": delegation_success,
+                        "needs_human": state.get('needs_human', False)  # Preserve needs_human state
                     }
                 }
             else:
@@ -901,38 +1008,61 @@ async def task_generator_node(state: AgentState) -> dict:
                         **task_data,
                         "delegation_response": planner_plan,
                         "delegation_task_id": delegation_task_id,
-                        "delegation_sent": True
+                        "delegation_sent": True,
+                        "needs_human": state.get('needs_human', False)  # Preserve needs_human state
                     }
                 }
             
         except Exception as e:
             logger.error(f"Task generation error: {e}")
-            return {"processed_data": {"error": str(e)}}
+            return {"processed_data": {"error": str(e), "needs_human": state.get('needs_human', False)}}
 
 async def filter_node(state: AgentState) -> dict:
-    """Router node to determine which agent to use"""
+    """Filter node to determine if user needs human support based on needs_human state and question matching"""
     messages = state.get('messages', [])
     user_id = state.get('user_id', 'anonymous')
+    current_needs_human = state.get('needs_human', False)  # Get current needs_human state
+
     anthropic_client = TrackedAnthropicClient(
-            session_id=f"task-gen-{user_id or 'anonymous'}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
-            agent_role="task-generator",
+            session_id=f"filter-{user_id or 'anonymous'}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+            agent_role="filter-agent",
             user_id=user_id or "anonymous"
         )
     user_message = messages[-1].content
-    try:
-        # Get routing decision from Claude 4 Sonnet
-        router_prompt = FILTER_AGENT_PROMPT.format(user_message=user_message)
-        response_content = await anthropic_client.async_chat(router_prompt, max_tokens=500, temperature=0.1)
-        logger.info(f"Filter response: {response_content}")
 
-        if response_content == "HUMAN" or response_content == "ROUTER":
-            return {"filter_result": response_content}
+    try:
+        # Use LLM to determine if message matches human support question list
+        filter_prompt = FILTER_AGENT_PROMPT.format(user_message=user_message)
+        llm_response = await anthropic_client.async_chat(filter_prompt, max_tokens=100, temperature=0.1)
+        logger.info(f"Filter LLM response: {llm_response}")
+
+        # Extract HUMAN or ROUTER from response (handle extra text)
+        matches_human_questions = "HUMAN" in llm_response.upper()
+
+        # Implement routing logic based on three scenarios:
+        # Scenario A: needs_human=true + user asks new question NOT in list → route to ROUTER (agentic system)
+        # Scenario B: needs_human=false + question matches list → set needs_human=true, route to HUMAN
+        # Scenario C: needs_human=false + question doesn't match → route to ROUTER (normal flow)
+
+        if current_needs_human and not matches_human_questions:
+            # Scenario A: User waiting for social worker but asks unrelated question
+            logger.info("Scenario A: needs_human=true, question NOT in list → routing to ROUTER (agentic system)")
+            return {"filter_result": "ROUTER", "needs_human": True}  # Keep needs_human=true
+
+        elif not current_needs_human and matches_human_questions:
+            # Scenario B: First time matching human support questions
+            logger.info("Scenario B: needs_human=false, question matches list → routing to HUMAN, setting needs_human=true")
+            return {"filter_result": "HUMAN", "needs_human": True}  # Set needs_human=true
+
         else:
-            return {"filter_result": "HUMAN"}
+            # Scenario C: Normal flow - question doesn't match, proceed to router
+            logger.info(f"Scenario C: needs_human={current_needs_human}, question doesn't match → routing to ROUTER")
+            return {"filter_result": "ROUTER", "needs_human": current_needs_human}  # Keep current state
 
     except Exception as e:
         logger.error(f"Filter error: {e}")
-        return {"filter_result": "HUMAN"}
+        # On error, default to ROUTER to avoid blocking users
+        return {"filter_result": "ROUTER", "needs_human": current_needs_human}
 
 async def followup_question_node(state: AgentState) -> dict:
     messages = state.get('messages', [])
@@ -992,7 +1122,8 @@ async def followup_question_node(state: AgentState) -> dict:
                 **task_data,
                 "delegation_response": followup_response["content"],
                 "delegation_task_id": "followup",
-                "delegation_sent": followup_success
+                "delegation_sent": followup_success,
+                "needs_human": state.get('needs_human', False)  # Preserve needs_human state
             }
         }
 
@@ -1009,7 +1140,8 @@ async def followup_question_node(state: AgentState) -> dict:
                 **task_data,
                 "delegation_response": f"Follow-up question error: {e}",
                 "delegation_task_id": "followup",
-                "delegation_sent": False
+                "delegation_sent": False,
+                "needs_human": state.get('needs_human', False)  # Preserve needs_human state
             }
         }
 
@@ -1073,39 +1205,79 @@ def filter_to_route(state: AgentState) -> str:
     filter_result = state.get("filter_result", "HUMAN")
     return filter_result
 
-def human_support_node(state: AgentState) -> dict:
-    """Human support node with Claude 4 Sonnet via Bedrock"""
+async def human_support_node(state: AgentState) -> dict:
+    """Human support node - escalates to social worker"""
     user_id = state.get('user_id', 'anonymous')
-    user_info = state.get('user_info', 'anonymous')
+    user_info = state.get('user_info', '')
+    messages = state.get('messages', [])
     task_gen = TaskGenerator(mock=state.get('mock', False))
     task_id = str(uuid.uuid4())
+
+    # Get user's latest message for context
+    user_message = messages[-1].content if messages else ""
+
+    # Generate a brief summary of what the user needs
+    anthropic_client = TrackedAnthropicClient(
+        session_id=f"human-support-{user_id or 'anonymous'}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+        agent_role="human-support",
+        user_id=user_id or "anonymous"
+    )
+
+    try:
+        # Generate concise summary
+        summary_prompt = f"""Based on this user request, provide a very brief 1-sentence summary of what they need:
+
+User request: {user_message}
+
+Output only the summary, nothing else. Example format: "Help scheduling a neurologist appointment" or "Assistance hiring an in-home caregiver"."""
+
+        summary = await anthropic_client.async_chat(summary_prompt, max_tokens=100, temperature=0.1)
+        summary = summary.strip()
+
+        # Construct human escalation message
+        content = f"I understand you need: {summary}. A social worker will reach back out to you to support you with this."
+
+    except Exception as e:
+        logger.error(f"Error generating summary: {e}")
+        # Fallback message if summary generation fails
+        content = "A social worker will reach back out to you to support you with your request."
+
     human_support_response = {
-                    "content": "This question is beyond the scope of our AI agents. I will direct this to a member of our social worker team, who will reach back to you soon.",
-                    "source": "task-generator-delegation",
-                    "task_id": task_id,
-                    "type": "delegation_response",
-                    "user_id": user_id,
-                    "metadata": {
-                        "user_info": user_info,
-                        "original_task_delegated": True,
-                        "agent_type": "task_generator"
-                    }
-                }
-                
-    # Send delegation response to Kafka results topic
+        "content": content,
+        "source": "human-support",
+        "task_id": task_id,
+        "type": "human_escalation",
+        "user_id": user_id,
+        "metadata": {
+            "user_info": user_info,
+            "needs_human": True,
+            "escalated_to_human": True,
+            "agent_type": "human_support"
+        }
+    }
+
+    # Send response to Kafka results topic
     delegation_success = task_gen.send_result_to_kafka(human_support_response)
 
     if delegation_success:
-        logger.info("Human support sent to Kafka results topic")
+        logger.info("Human support escalation sent to Kafka results topic")
     else:
-        logger.error("Failed to send human support to Kafka")
+        logger.error("Failed to send human support escalation to Kafka")
+
+    task_data = {
+        "messages": "",
+        "user_id": user_id,
+        "user_info": user_info,
+        "planner_plan": ""
+    }
 
     return {
         "processed_data": {
             **task_data,
-            "delegation_response": "This question is beyond the scope of our AI agents. I will direct this to a member of our social worker team, who will reach back to you soon.",
+            "delegation_response": content,
             "delegation_task_id": task_id,
-            "delegation_sent": delegation_success
+            "delegation_sent": delegation_success,
+            "needs_human": True  # Mark that this user needs human support
         }
     }
 
@@ -1181,7 +1353,8 @@ async def frontend_agent_node(state: AgentState) -> dict:
                     "agent_used": "frontend_agent",
                     "response": response_content,
                     "task_id": task_id,
-                    "kafka_sent": True
+                    "kafka_sent": True,
+                    "needs_human": state.get('needs_human', False)  # Preserve needs_human state
                 }
             }
         else:
@@ -1192,13 +1365,14 @@ async def frontend_agent_node(state: AgentState) -> dict:
                     "response": response_content,
                     "task_id": task_id,
                     "kafka_sent": False,
-                    "error": "Failed to send to Kafka"
+                    "error": "Failed to send to Kafka",
+                    "needs_human": state.get('needs_human', False)  # Preserve needs_human state
                 }
             }
 
     except Exception as e:
         logger.error(f"Frontend agent error: {e}")
-        return {"processed_data": {"error": str(e), "agent_used": "frontend_agent"}}
+        return {"processed_data": {"error": str(e), "agent_used": "frontend_agent", "needs_human": state.get('needs_human', False)}}
 
 def create_task_generator_graph() -> StateGraph:
     """Create and return the task generator graph"""
@@ -1241,17 +1415,19 @@ def create_task_generator_graph() -> StateGraph:
 # Create the graph instance
 graph = create_task_generator_graph()
 
-async def generate_task_from_messages(messages: List[BaseMessage], user_id: str = None, user_info: str = None, mock: bool = False) -> dict:
+async def generate_task_from_messages(messages: List[BaseMessage], user_id: str = None, user_info: str = None, mock: bool = False, needs_human: bool = False) -> dict:
     """Generate task from messages and send to Kafka"""
     # print("messages", messages)
     # print("user_id", user_id)
     # print("user_info", user_info)
+    # print("needs_human", needs_human)
     result = await graph.ainvoke({
         "messages": messages,
         "user_id": user_id,
         "user_info": user_info,
         "processed_data": None,
-        "mock": mock
+        "mock": mock,
+        "needs_human": needs_human  # Pass needs_human state to the graph
     })
     return result
 

@@ -30,6 +30,8 @@ messages: List[Dict] = []
 # Changed to dict to track user_id per client: {client_queue: user_id}
 sse_clients: Dict[asyncio.Queue, str] = {}
 kafka_consumer_running = False
+# Track needs_human state per user
+user_needs_human: Dict[str, bool] = {}
 
 class ChatMessage(BaseModel):
     content: str
@@ -353,18 +355,31 @@ async def send_message(message: ChatMessage):
             if recent_conversation:
                 logger.info(f"History preview: First={recent_conversation[0].get('content', '')[:50]}... Last={recent_conversation[-1].get('content', '')[:50]}...")
             
+            # Get current needs_human state for this user
+            current_needs_human = user_needs_human.get(message.user_id, False)
+
             # Send history WITHOUT current message (since we send it separately)
             payload = {
                 "conversation_history": recent_conversation,  # Previous messages only
                 "current_message": message.content,         # Current message separately
-                "user_id": message.user_id
+                "user_id": message.user_id,
+                "needs_human": current_needs_human  # Pass needs_human state
             }
-            
-            logger.info(f"Sending to task generator: current_message='{message.content[:100]}...', history_count={len(recent_conversation)}")
+
+            logger.info(f"Sending to task generator: current_message='{message.content[:100]}...', history_count={len(recent_conversation)}, needs_human={current_needs_human}")
             response = await client.post(f"{task_generator_url}/generate-task", json=payload)
-            
+
             if response.status_code == 200:
                 logger.info("Successfully sent message to task generator")
+                # Update needs_human state from response
+                try:
+                    response_data = response.json()
+                    updated_needs_human = response_data.get("needs_human", current_needs_human)
+                    if updated_needs_human != current_needs_human:
+                        user_needs_human[message.user_id] = updated_needs_human
+                        logger.info(f"Updated needs_human for user {message.user_id}: {current_needs_human} -> {updated_needs_human}")
+                except Exception as e:
+                    logger.warning(f"Failed to parse needs_human from response: {e}")
             else:
                 logger.error(f"Task generator returned status {response.status_code}: {response.text}")
                 
@@ -453,23 +468,38 @@ async def send_external_message(request: ExternalMessage):
         task_generator_url = "http://langgraph-kafka-task-generator:8001"
 
         async with httpx.AsyncClient(timeout=90.0) as client:
+            # Get current needs_human state for this user
+            current_needs_human = user_needs_human.get(request.user_id, False)
+
             payload = {
                 "conversation_history": conversation_history,
                 "current_message": current_message,
-                "user_id": request.user_id
+                "user_id": request.user_id,
+                "needs_human": current_needs_human  # Pass needs_human state
             }
 
-            logger.info(f"External API: Forwarding to task generator for user {request.user_id}")
+            logger.info(f"External API: Forwarding to task generator for user {request.user_id}, needs_human={current_needs_human}")
             response = await client.post(f"{task_generator_url}/generate-task", json=payload)
 
             if response.status_code == 200:
                 logger.info(f"External API: Successfully processed request for user {request.user_id}")
+                # Update needs_human state from response
+                try:
+                    response_data = response.json()
+                    updated_needs_human = response_data.get("needs_human", current_needs_human)
+                    if updated_needs_human != current_needs_human:
+                        user_needs_human[request.user_id] = updated_needs_human
+                        logger.info(f"External API: Updated needs_human for user {request.user_id}: {current_needs_human} -> {updated_needs_human}")
+                except Exception as e:
+                    logger.warning(f"External API: Failed to parse needs_human from response: {e}")
+
                 return {
                     "status": "success",
                     "message": "Request processed through task generator",
                     "user_id": request.user_id,
                     "message_count": len(request.messages),
-                    "delivery": "task_generator"
+                    "delivery": "task_generator",
+                    "needs_human": updated_needs_human  # Include in response
                 }
             else:
                 logger.error(f"External API: Task generator error for user {request.user_id}: {response.status_code}")
