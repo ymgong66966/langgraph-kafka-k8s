@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(docker:*)"
+      "Bash(docker:*)",
+      "Bash(kubectl get:*)",
+      "Bash(kubectl describe:*)",
+      "Bash(helm get values:*)",
+      "Bash(kubectl logs:*)",
+      "Bash(git add:*)"
     ],
     "deny": []
   }

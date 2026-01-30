@@ -114,6 +114,118 @@ kubectl rollout restart deployment -n langgraph
 
 ---
 
+## 🧪 测试 Chat Interface UI
+
+### 方法 1: 通过 ALB Ingress（推荐）
+
+如果你已经运行过 `QUICK_DEPLOY.sh`，直接访问 public URL：
+
+```bash
+# 获取 Ingress URL
+kubectl get ingress -n langgraph -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
+echo
+
+# 示例输出: k8s-langgrap-langgrap-xxx.us-east-2.elb.amazonaws.com
+```
+
+在浏览器打开：
+```
+http://<ingress-url>
+```
+
+### 方法 2: 本地 Port Forward
+
+如果没有 Ingress 或者想本地测试：
+
+```bash
+# Port forward chat-interface
+kubectl port-forward -n langgraph svc/langgraph-kafka-chat-interface 8003:8003
+
+# 在浏览器打开
+open http://localhost:8003
+```
+
+### 测试步骤
+
+1. **检查服务状态**
+   ```bash
+   # 查看 chat-interface pod
+   kubectl get pods -n langgraph -l app.kubernetes.io/component=chat-interface
+
+   # 查看日志
+   kubectl logs -n langgraph -l app.kubernetes.io/component=chat-interface --tail=50
+   ```
+
+2. **验证连接**
+   - 打开浏览器访问 URL
+   - 应该看到聊天界面
+   - 检查浏览器 Console (F12) 是否有错误
+
+3. **使用不同的 User ID 测试**
+
+   前端会自动从 URL query parameter 读取 `user_id`，如果没有则生成随机 ID：
+
+   ```bash
+   # 方法 1: 通过 URL query parameter（推荐）
+   http://<ingress-url>/static/index.html?user_id=test_user_1
+   http://<ingress-url>/static/index.html?user_id=test_user_2
+   http://<ingress-url>/static/index.html?user_id=alice
+
+   # 方法 2: 清除 localStorage 生成新的随机 ID
+   # 在浏览器 Console (F12) 中输入:
+   localStorage.removeItem('chat_user_id')
+   # 然后刷新页面
+
+   # 方法 3: 直接修改 localStorage
+   # 在浏览器 Console (F12) 中输入:
+   localStorage.setItem('chat_user_id', 'your_user_id')
+   # 然后刷新页面
+   ```
+
+4. **测试消息发送（通过 API）**
+   ```bash
+   # 直接通过 API 发送消息
+   curl -X POST http://localhost:8003/chat/send \
+     -H "Content-Type: application/json" \
+     -d '{
+       "content": "Hello, world!",
+       "user_id": "test_user_1"
+     }'
+
+   # 查看特定用户的历史消息
+   curl http://localhost:8003/chat/history?user_id=test_user_1
+   ```
+
+5. **检查 Kafka 连接**
+   ```bash
+   # 确认 chat-interface 能连接到 Kafka
+   kubectl logs -n langgraph -l app.kubernetes.io/component=chat-interface | grep -i kafka
+   ```
+
+### 预期结果
+
+✅ **成功标志**:
+- 浏览器能打开聊天界面
+- 没有连接错误
+- 能看到 Kafka bootstrap servers 连接日志
+
+❌ **失败排查**:
+```bash
+# 1. 检查 pod 状态
+kubectl get pods -n langgraph -l app.kubernetes.io/component=chat-interface
+
+# 2. 查看详细日志
+kubectl logs -n langgraph -l app.kubernetes.io/component=chat-interface --tail=100
+
+# 3. 检查环境变量
+kubectl get pods -n langgraph -l app.kubernetes.io/component=chat-interface -o jsonpath='{.items[0].spec.containers[0].env}' | jq
+
+# 4. 测试 Kafka 连接
+kubectl exec -n langgraph -it $(kubectl get pod -n langgraph -l component=task-generator -o jsonpath='{.items[0].metadata.name}') -- python -c "from kafka import KafkaConsumer; print('Kafka OK')"
+```
+
+---
+
 ## ❓ 常见问题
 
 ### Q: 为什么pods没有更新到最新代码？

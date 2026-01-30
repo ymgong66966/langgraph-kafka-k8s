@@ -1235,12 +1235,12 @@ Output only the summary, nothing else. Example format: "Help scheduling a neurol
         summary = summary.strip()
 
         # Construct human escalation message
-        content = f"I understand you need: {summary}. A social worker will reach back out to you to support you with this."
+        content = f"I understand you need: {summary}. I’m coordinating with our clinical team and will follow up shortly to support you with this."
 
     except Exception as e:
         logger.error(f"Error generating summary: {e}")
         # Fallback message if summary generation fails
-        content = "A social worker will reach back out to you to support you with your request."
+        content = "I’m coordinating with our clinical team and will follow up shortly to support you with this."
 
     human_support_response = {
         "content": content,
