@@ -61,10 +61,10 @@ fi
 
 echo -e "${GREEN}✅ GitHub repo: ${GITHUB_USER}/${REPO_NAME}${NC}"
 
-# Get current commit SHA
+# Get current branch
+BRANCH=$(git branch --show-current)
 CURRENT_SHA=$(git rev-parse HEAD)
 SHORT_SHA=$(echo $CURRENT_SHA | cut -c1-7)
-BRANCH=$(git branch --show-current)
 
 echo -e "${GREEN}✅ Current branch: ${BRANCH}${NC}"
 echo -e "${GREEN}✅ Current commit: ${SHORT_SHA}${NC}"
@@ -80,12 +80,13 @@ if [ "$BRANCH" != "main" ] && [ "$BRANCH" != "master" ]; then
     fi
 fi
 
-# Set image configuration
+# Set image configuration - using 'latest' tag
 REGISTRY="ghcr.io"
 IMAGE_REPO="$REGISTRY/$GITHUB_USER/$REPO_NAME"
-IMAGE_TAG="${BRANCH}-${SHORT_SHA}"
+IMAGE_TAG="latest"
 
 echo -e "${GREEN}📦 Using images from: ${IMAGE_REPO}/*:${IMAGE_TAG}${NC}"
+echo -e "${GREEN}   (GitHub Actions builds 'latest' on every main branch push)${NC}"
 
 # Prompt for OpenAI API key if not set
 if [ -z "$OPENAI_API_KEY" ]; then
@@ -114,8 +115,6 @@ helm upgrade --install langgraph-kafka ./helm \
   --namespace langgraph \
   --create-namespace \
   --values helm/values-dev.yaml \
-  --set image.repository="$IMAGE_REPO" \
-  --set image.tag="$IMAGE_TAG" \
   --set env.openaiApiKey="$OPENAI_API_KEY" \
   --set env.kafkaBootstrapServers="langgraph-system-kafka:9092" \
   --set env.kafkaTopic="dev-langgraph-agent-events" \

@@ -108,11 +108,11 @@ kubectl get pods -n langgraph
 ### 2. 检查服务健康
 ```bash
 # Task Generator健康检查
-kubectl port-forward -n langgraph svc/langgraph-system-langgraph-kafka-task-generator 8001:8001 &
+kubectl port-forward -n langgraph svc/langgraph-kafka-task-generator 8001:8001 &
 curl http://localhost:8001/health
 
 # Chat Interface健康检查
-kubectl port-forward -n langgraph svc/langgraph-system-langgraph-kafka-chat-interface 8003:8003 &
+kubectl port-forward -n langgraph svc/langgraph-kafka-chat-interface 8003:8003 &
 curl http://localhost:8003/health
 ```
 
@@ -120,7 +120,7 @@ curl http://localhost:8003/health
 
 ```bash
 # 方法1: 通过Chat Interface UI
-# 打开浏览器访问: http://localhost:8003
+# 打开浏览器访问: http://localhost:8003/static/
 # 尝试发送以下消息测试：
 
 # 应该触发human escalation:

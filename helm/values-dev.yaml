@@ -1,4 +1,10 @@
 # Development values for langgraph-kafka
+#
+# 🎯 Using 'latest' tag for automatic updates
+# GitHub Actions builds and pushes 'latest' tag on every main branch push.
+# This means after git push, just run deploy-from-github.sh to get the latest code.
+# No need to manually update image tags!
+#
 replicaCount: 1
 
 # Enable serviceAccount creation since using external Kafka
@@ -11,7 +17,7 @@ agentComms:
   replicaCount: 1
   image:
     repository: ghcr.io/ymgong66966/langgraph-kafka-k8s/agent-comms
-    tag: main-f378acd
+    tag: latest
   resources:
     limits:
       cpu: 200m
@@ -25,7 +31,7 @@ taskGenerator:
   replicaCount: 1
   image:
     repository: ghcr.io/ymgong66966/langgraph-kafka-k8s/task-generator
-    tag: main-f378acd
+    tag: latest
   resources:
     limits:
       cpu: 200m
@@ -39,7 +45,7 @@ chatInterface:
   replicaCount: 1
   image:
     repository: ghcr.io/ymgong66966/langgraph-kafka-k8s/chat-interface
-    tag: main-f378acd
+    tag: latest
   service:
     type: ClusterIP
     port: 8003
@@ -93,7 +99,7 @@ taskSolver:
   replicaCount: 2
   image:
     repository: ghcr.io/ymgong66966/langgraph-kafka-k8s/task-solver
-    tag: main-f378acd
+    tag: latest
   resources:
     limits:
       cpu: 200m

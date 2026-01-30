@@ -48,3 +48,4 @@ test-env-*/
 # OS
 .DS_Store
 Thumbs.db.kuberlr/
+.claude/
