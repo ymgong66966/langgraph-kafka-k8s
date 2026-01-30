@@ -1274,6 +1274,10 @@ Output only the summary, nothing else. Example format: "Help scheduling a neurol
     return {
         "processed_data": {
             **task_data,
+            "agent_used": "human_support",
+            "response": content,
+            "task_id": task_id,
+            "kafka_sent": delegation_success,
             "delegation_response": content,
             "delegation_task_id": task_id,
             "delegation_sent": delegation_success,

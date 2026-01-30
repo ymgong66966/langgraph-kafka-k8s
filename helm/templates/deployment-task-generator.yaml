@@ -34,7 +34,7 @@ spec:
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.taskGenerator.image.repository }}:{{ .Values.taskGenerator.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          imagePullPolicy: {{ .Values.taskGenerator.image.pullPolicy | default "IfNotPresent" }}
           ports:
             - name: http
               containerPort: 8001

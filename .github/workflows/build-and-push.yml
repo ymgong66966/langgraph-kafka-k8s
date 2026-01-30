@@ -162,15 +162,13 @@ jobs:
         kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=kafka -n langgraph-system --timeout=300s
         
         # Use upgrade --install to handle existing resources
+        # Note: Using 'latest' tag from values-dev.yaml, no tag override needed
         helm upgrade --install langgraph-kafka ./helm \
           --namespace langgraph \
           --values helm/values-dev.yaml \
           --set taskGenerator.image.repository=ghcr.io/${{ github.repository }}/task-generator \
-          --set taskGenerator.image.tag=main-${SHORT_SHA} \
           --set taskSolver.image.repository=ghcr.io/${{ github.repository }}/task-solver \
-          --set taskSolver.image.tag=main-${SHORT_SHA} \
           --set chatInterface.image.repository=ghcr.io/${{ github.repository }}/chat-interface \
-          --set chatInterface.image.tag=main-${SHORT_SHA} \
           --set env.openaiApiKey="${{ secrets.OPENAI_API_KEY }}" \
           --set env.langchainTracing="true" \
           --set env.langchainEndpoint="https://api.smith.langchain.com" \

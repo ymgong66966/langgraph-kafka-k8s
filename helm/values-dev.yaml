@@ -2,7 +2,7 @@
 #
 # 🎯 Using 'latest' tag for automatic updates
 # GitHub Actions builds and pushes 'latest' tag on every main branch push.
-# This means after git push, just run deploy-from-github.sh to get the latest code.
+# This means after git push, Kubernetes will automatically pull the latest images.
 # No need to manually update image tags!
 #
 replicaCount: 1
@@ -18,6 +18,7 @@ agentComms:
   image:
     repository: ghcr.io/ymgong66966/langgraph-kafka-k8s/agent-comms
     tag: latest
+    pullPolicy: Always
   resources:
     limits:
       cpu: 200m
@@ -32,6 +33,7 @@ taskGenerator:
   image:
     repository: ghcr.io/ymgong66966/langgraph-kafka-k8s/task-generator
     tag: latest
+    pullPolicy: Always
   resources:
     limits:
       cpu: 200m
@@ -46,6 +48,7 @@ chatInterface:
   image:
     repository: ghcr.io/ymgong66966/langgraph-kafka-k8s/chat-interface
     tag: latest
+    pullPolicy: Always
   service:
     type: ClusterIP
     port: 8003
@@ -100,6 +103,7 @@ taskSolver:
   image:
     repository: ghcr.io/ymgong66966/langgraph-kafka-k8s/task-solver
     tag: latest
+    pullPolicy: Always
   resources:
     limits:
       cpu: 200m

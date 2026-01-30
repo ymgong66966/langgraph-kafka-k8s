@@ -44,11 +44,12 @@ RESPONSE_B=$(curl -s -X POST "${API_URL}/generate-task" \
     "needs_human": false
   }')
 
-NEEDS_HUMAN_B=$(echo "$RESPONSE_B" | grep -o '"needs_human":[^,]*' | cut -d':' -f2)
+NEEDS_HUMAN_B=$(echo "$RESPONSE_B" | jq -r '.needs_human')
+RESPONSE_TEXT_B=$(echo "$RESPONSE_B" | jq -r '.response')
 
 if [ "$NEEDS_HUMAN_B" = "true" ]; then
     echo -e "${GREEN}✅ PASS: needs_human changed to true${NC}"
-    echo "Response preview: $(echo "$RESPONSE_B" | grep -o '"response":"[^"]*"' | head -c 100)..."
+    echo "Response preview: ${RESPONSE_TEXT_B:0:100}..."
 else
     echo -e "${RED}❌ FAIL: needs_human is ${NEEDS_HUMAN_B}, expected true${NC}"
     echo "Full response: $RESPONSE_B"
@@ -72,12 +73,13 @@ RESPONSE_C=$(curl -s -X POST "${API_URL}/generate-task" \
     "needs_human": false
   }')
 
-NEEDS_HUMAN_C=$(echo "$RESPONSE_C" | grep -o '"needs_human":[^,]*' | cut -d':' -f2)
-AGENT_C=$(echo "$RESPONSE_C" | grep -o '"agent_used":"[^"]*"' | cut -d':' -f2 | tr -d '"')
+NEEDS_HUMAN_C=$(echo "$RESPONSE_C" | jq -r '.needs_human')
+AGENT_C=$(echo "$RESPONSE_C" | jq -r '.agent_used')
 
 if [ "$NEEDS_HUMAN_C" = "false" ] && [ "$AGENT_C" = "frontend_agent" ]; then
     echo -e "${GREEN}✅ PASS: needs_human stayed false, routed to ${AGENT_C}${NC}"
-    echo "Response preview: $(echo "$RESPONSE_C" | grep -o '"response":"[^"]*"' | head -c 100)..."
+    RESPONSE_TEXT_C=$(echo "$RESPONSE_C" | jq -r '.response')
+    echo "Response preview: ${RESPONSE_TEXT_C:0:100}..."
 else
     echo -e "${RED}❌ FAIL: needs_human=${NEEDS_HUMAN_C}, agent=${AGENT_C}${NC}"
     echo "Full response: $RESPONSE_C"
@@ -101,12 +103,13 @@ RESPONSE_A=$(curl -s -X POST "${API_URL}/generate-task" \
     "needs_human": true
   }')
 
-NEEDS_HUMAN_A=$(echo "$RESPONSE_A" | grep -o '"needs_human":[^,]*' | cut -d':' -f2)
-AGENT_A=$(echo "$RESPONSE_A" | grep -o '"agent_used":"[^"]*"' | cut -d':' -f2 | tr -d '"')
+NEEDS_HUMAN_A=$(echo "$RESPONSE_A" | jq -r '.needs_human')
+AGENT_A=$(echo "$RESPONSE_A" | jq -r '.agent_used')
 
 if [ "$NEEDS_HUMAN_A" = "true" ] && [ "$AGENT_A" = "frontend_agent" ]; then
     echo -e "${GREEN}✅ PASS: needs_human stayed true, routed to ${AGENT_A}${NC}"
-    echo "Response preview: $(echo "$RESPONSE_A" | grep -o '"response":"[^"]*"' | head -c 100)..."
+    RESPONSE_TEXT_A=$(echo "$RESPONSE_A" | jq -r '.response')
+    echo "Response preview: ${RESPONSE_TEXT_A:0:100}..."
 else
     echo -e "${RED}❌ FAIL: needs_human=${NEEDS_HUMAN_A}, agent=${AGENT_A}${NC}"
     echo "Full response: $RESPONSE_A"

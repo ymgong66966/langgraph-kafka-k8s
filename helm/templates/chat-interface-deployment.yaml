@@ -21,7 +21,7 @@ spec:
       containers:
       - name: chat-interface
         image: "{{ .Values.chatInterface.image.repository }}:{{ .Values.chatInterface.image.tag | default .Chart.AppVersion }}"
-        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        imagePullPolicy: {{ .Values.chatInterface.image.pullPolicy | default "IfNotPresent" }}
         ports:
         - name: http
           containerPort: 8003
