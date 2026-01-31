@@ -490,15 +490,18 @@ async def send_external_message(request: ExternalMessage):
 
             if response.status_code == 200:
                 logger.info(f"External API: Successfully processed request for user {request.user_id}")
-                # Update needs_human state from response
+                # Update needs_human state and extract agent_type from response
+                agent_type = "unknown"
+                updated_needs_human = current_needs_human
                 try:
                     response_data = response.json()
                     updated_needs_human = response_data.get("needs_human", current_needs_human)
+                    agent_type = response_data.get("agent_used", "unknown")
                     if updated_needs_human != current_needs_human:
                         user_needs_human[request.user_id] = updated_needs_human
                         logger.info(f"External API: Updated needs_human for user {request.user_id}: {current_needs_human} -> {updated_needs_human}")
                 except Exception as e:
-                    logger.warning(f"External API: Failed to parse needs_human from response: {e}")
+                    logger.warning(f"External API: Failed to parse response: {e}")
 
                 return {
                     "status": "success",
@@ -506,7 +509,8 @@ async def send_external_message(request: ExternalMessage):
                     "user_id": request.user_id,
                     "message_count": len(request.messages),
                     "delivery": "task_generator",
-                    "needs_human": updated_needs_human  # Include in response
+                    "needs_human": updated_needs_human,
+                    "agent_type": agent_type  # Include agent_type for routing info
                 }
             else:
                 logger.error(f"External API: Task generator error for user {request.user_id}: {response.status_code}")
