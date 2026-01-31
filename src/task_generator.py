@@ -1039,25 +1039,26 @@ async def filter_node(state: AgentState) -> dict:
         # Extract HUMAN or ROUTER from response (handle extra text)
         matches_human_questions = "HUMAN" in llm_response.upper()
 
-        # Implement routing logic based on three scenarios:
-        # Scenario A: needs_human=true + user asks new question NOT in list → route to ROUTER (agentic system)
-        # Scenario B: needs_human=false + question matches list → set needs_human=true, route to HUMAN
-        # Scenario C: needs_human=false + question doesn't match → route to ROUTER (normal flow)
+        # Implement routing logic:
+        # Priority 1: If question matches human support list → ALWAYS route to HUMAN
+        # Priority 2: If needs_human=true but question NOT in list → route to ROUTER (agentic system)
+        # Priority 3: Normal flow (needs_human=false, question not in list) → route to ROUTER
 
-        if current_needs_human and not matches_human_questions:
-            # Scenario A: User waiting for social worker but asks unrelated question
-            logger.info("Scenario A: needs_human=true, question NOT in list → routing to ROUTER (agentic system)")
+        if matches_human_questions:
+            # Question is in the human support list - ALWAYS route to HUMAN
+            # This applies whether needs_human is true or false
+            logger.info(f"Question matches human support list → routing to HUMAN (needs_human was {current_needs_human})")
+            return {"filter_result": "HUMAN", "needs_human": True}
+
+        elif current_needs_human:
+            # User is waiting for social worker but asks unrelated question
+            logger.info("needs_human=true, question NOT in list → routing to ROUTER (agentic system)")
             return {"filter_result": "ROUTER", "needs_human": True}  # Keep needs_human=true
 
-        elif not current_needs_human and matches_human_questions:
-            # Scenario B: First time matching human support questions
-            logger.info("Scenario B: needs_human=false, question matches list → routing to HUMAN, setting needs_human=true")
-            return {"filter_result": "HUMAN", "needs_human": True}  # Set needs_human=true
-
         else:
-            # Scenario C: Normal flow - question doesn't match, proceed to router
-            logger.info(f"Scenario C: needs_human={current_needs_human}, question doesn't match → routing to ROUTER")
-            return {"filter_result": "ROUTER", "needs_human": current_needs_human}  # Keep current state
+            # Normal flow - needs_human=false and question doesn't match
+            logger.info("needs_human=false, question NOT in list → routing to ROUTER (normal flow)")
+            return {"filter_result": "ROUTER", "needs_human": False}
 
     except Exception as e:
         logger.error(f"Filter error: {e}")
