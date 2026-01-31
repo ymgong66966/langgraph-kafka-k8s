@@ -184,11 +184,20 @@ jobs:
           --set env.disableCheckpointer="true" \
           --timeout 600s
           
+        echo "✅ Helm upgrade completed"
+
+        # Force pods to restart and pull latest images
+        echo "🔄 Restarting deployments to pull latest images..."
+        kubectl rollout restart deployment -n langgraph
+
         echo "✅ Deployment completed"
-    
+
     - name: Wait for deployment
       run: |
-        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=langgraph-kafka -n langgraph --timeout=300s
+        # Wait for rollout to complete
+        kubectl rollout status deployment/langgraph-kafka-task-generator -n langgraph --timeout=300s
+        kubectl rollout status deployment/langgraph-kafka-task-solver -n langgraph --timeout=300s
+        kubectl rollout status deployment/langgraph-kafka-chat-interface -n langgraph --timeout=300s
     
     - name: Verify deployment
       run: |

@@ -54,7 +54,7 @@ RESPONSE_B=$(curl -s -X POST "${ALB_URL}/external/send" \
   }")
 
 echo "Response: $RESPONSE_B"
-NEEDS_HUMAN_B=$(echo "$RESPONSE_B" | jq -r '.needs_human // "null"')
+NEEDS_HUMAN_B=$(echo "$RESPONSE_B" | jq -r '.needs_human | tostring')
 STATUS_B=$(echo "$RESPONSE_B" | jq -r '.status // "error"')
 
 if [ "$STATUS_B" = "success" ] && [ "$NEEDS_HUMAN_B" = "true" ]; then
@@ -81,7 +81,7 @@ RESPONSE_C=$(curl -s -X POST "${ALB_URL}/external/send" \
   }")
 
 echo "Response: $RESPONSE_C"
-NEEDS_HUMAN_C=$(echo "$RESPONSE_C" | jq -r '.needs_human // "null"')
+NEEDS_HUMAN_C=$(echo "$RESPONSE_C" | jq -r '.needs_human | tostring')
 STATUS_C=$(echo "$RESPONSE_C" | jq -r '.status // "error"')
 
 if [ "$STATUS_C" = "success" ] && [ "$NEEDS_HUMAN_C" = "false" ]; then
@@ -108,7 +108,7 @@ RESPONSE_A=$(curl -s -X POST "${ALB_URL}/external/send" \
   }")
 
 echo "Response: $RESPONSE_A"
-NEEDS_HUMAN_A=$(echo "$RESPONSE_A" | jq -r '.needs_human // "null"')
+NEEDS_HUMAN_A=$(echo "$RESPONSE_A" | jq -r '.needs_human | tostring')
 STATUS_A=$(echo "$RESPONSE_A" | jq -r '.status // "error"')
 
 if [ "$STATUS_A" = "success" ] && [ "$NEEDS_HUMAN_A" = "true" ]; then
