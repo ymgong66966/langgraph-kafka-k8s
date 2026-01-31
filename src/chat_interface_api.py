@@ -49,6 +49,7 @@ class IncomingMessage(BaseModel):
 class ExternalMessage(BaseModel):
     user_id: str
     messages: List[Dict[str, str]]  # List of messages with 'role' and 'text' fields
+    needs_human: Optional[bool] = None  # Optional: override needs_human state
 
 # LangGraph endpoint mapping
 LANGGRAPH_ENDPOINTS = {
@@ -468,8 +469,14 @@ async def send_external_message(request: ExternalMessage):
         task_generator_url = "http://langgraph-kafka-task-generator:8001"
 
         async with httpx.AsyncClient(timeout=90.0) as client:
-            # Get current needs_human state for this user
-            current_needs_human = user_needs_human.get(request.user_id, False)
+            # Get needs_human state: use request value if provided, otherwise from memory
+            if request.needs_human is not None:
+                current_needs_human = request.needs_human
+                # Also update the in-memory state
+                user_needs_human[request.user_id] = current_needs_human
+                logger.info(f"External API: Using provided needs_human={current_needs_human} for user {request.user_id}")
+            else:
+                current_needs_human = user_needs_human.get(request.user_id, False)
 
             payload = {
                 "conversation_history": conversation_history,
