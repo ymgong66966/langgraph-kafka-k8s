@@ -328,133 +328,32 @@ KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'dev-langgraph-agent-events')
 KAFKA_RESULTS_TOPIC = os.getenv('KAFKA_RESULTS_TOPIC', 'dev-langgraph-task-results')
 # OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')  # No longer needed - using BedrockClient instead
 FILTER_AGENT_PROMPT = """
-You are a filter agent that determines if a user's message requires human support (social worker intervention).
+You are a filter agent. Output ONLY "ROUTER" or "HUMAN" — nothing else.
 
-Your task: Output ONLY one of these two strings: "ROUTER" or "HUMAN"
+Output "HUMAN" ONLY when the user is explicitly asking a real person (social worker, advocate, case manager) to perform an action on their behalf that an AI cannot do. Examples:
 
-Output "HUMAN" if the user's message is semantically similar to ANY of the following types of requests:
+- "Can someone call my insurance company for me?"
+- "I need a social worker to schedule my mom's neurologist appointment"
+- "Can you call the pharmacy on my behalf?"
+- "I need someone to attend the care meeting with my family"
+- "Please act as my representative with Social Security"
+- "I need a person to interview home care agencies for me"
+- "Can someone follow up with Medicaid on my behalf?"
+- "I need help filing my FMLA paperwork with HR" (requires a human to submit/advocate)
+- "I want to talk to a real person"
+- "Can I speak to a human?"
+- "Transfer me to a social worker"
 
-**Scheduling & Appointments:**
-- Schedule consultation with neurologist/specialist
-- Book appointment with memory care specialist/primary care doctor
-- Set up follow-up visits
-- Schedule rides for therapy/appointments
-- Coordinate ongoing medical transportation
+Output "ROUTER" for everything else, including:
+- Asking for information, advice, or recommendations (even about caregiving, insurance, medications, housing, etc.)
+- Asking general questions about benefits, services, or processes
+- Asking the AI to explain, summarize, compare, or research something
+- Casual conversation, greetings, or follow-ups
+- Any request the AI agent can handle by providing information or guidance
 
-**Hiring & Interviewing:**
-- Help hire in-home caregiver
-- Interview home care agencies
-- Screen caregivers and set up interviews
+When in doubt, output "ROUTER". Only output "HUMAN" when there is a clear, explicit request for a real person to take a real-world action.
 
-**Phone Calls & Advocacy:**
-- Call provider/pharmacy on behalf
-- Speak to insurance company on behalf
-- Follow up with agencies/providers
-- Advocate with providers
-
-**Reminders & Follow-ups:**
-- Remind to call Medicaid/insurance
-- Call Medicaid on behalf
-- Follow up with insurance about paperwork
-- Track down missing test results
-
-**Housing & Moving:**
-- Coordinate moving into assisted living
-- Set up tours at facilities
-- Finalize housing placement
-- Coordinate facility tours
-- Prepare for housing interviews
-- Organize moving company/logistics
-
-**Respite Care:**
-- Find and book respite care
-- Apply for respite care grants
-- Compare short-term respite options
-
-**Medication Management:**
-- Tell which medications shouldn't be taken together
-- Call pharmacy to check prescription
-- Clarify medication instructions with doctor
-
-**Family Coordination:**
-- Organize family meeting about care plans
-- Coordinate schedules with siblings
-- Help align family on next steps
-
-**Medical Records & Documentation:**
-- Request medical records from hospital
-- Transfer records to new provider
-
-**Insurance & Claims:**
-- Call insurance about denied claims
-- Help appeal denied procedures
-- Review bills and flag errors
-
-**Paperwork & Applications:**
-- Help fill out FMLA paperwork
-- Submit FMLA forms to HR
-- Track FMLA claim deadlines
-- Gather documents for applications
-- Complete and review applications
-- Check if anything missing from paperwork
-
-**Financial Assistance:**
-- Help apply for financial assistance programs
-- Identify qualifying grants/subsidies
-- Review expenses for cost-saving programs
-- Compare insurance policies
-- Understand coverage differences
-- Assist with application process
-
-**Disability & VA Benefits:**
-- Help with Social Security disability paperwork
-- Follow up on disability claims
-- Prepare for disability appeals
-- Apply for VA caregiver benefits
-- Connect with veteran support officer
-- Assist with VA insurance appeals
-
-**Home Modifications & Services:**
-- Arrange home safety assessment
-- Monitor progress on home modifications
-- Choose meal delivery service
-- Arrange grocery delivery
-- Request medical equipment
-- Manage referrals and approvals
-
-**Regular Check-ins & Monitoring:**
-- Check in monthly and report back
-- Assess caregiver/recipient status regularly
-- Update care circle on progress
-
-**End-of-Life & Grief:**
-- Plan for discharge from rehab
-- Plan end-of-life care
-- Assist with funeral arrangements
-- Find grief counseling resources
-
-**Authorization & Representation:**
-- Act as authorized unpaid representative for claims
-- Be listed as representative on cases
-- Communicate with Social Security on behalf
-
-**Employee Benefits & Mental Health:**
-- Understand employee benefits for caregiving
-- Verify dependent eligibility with employer
-- Find and book therapist covered by insurance
-- Coordinate mental health care
-- Follow up with mental health providers
-
-**Task Management:**
-- Add appointments to calendar
-- Track deadlines and reminders
-- Organize tasks to prevent things falling through
-
-IMPORTANT: Match based on SEMANTIC SIMILARITY, not exact wording. If the user's intent matches any category above, output "HUMAN".
-
-If the user's message does NOT match any of the above categories, output "ROUTER".
-
-CRITICAL: Output ONLY "ROUTER" or "HUMAN" - no other text, no explanation, no quotes, no formatting.
+CRITICAL: Output ONLY "ROUTER" or "HUMAN" — one word, no explanation, no quotes, no formatting.
 
 User message: {user_message}
 
@@ -1036,8 +935,18 @@ async def filter_node(state: AgentState) -> dict:
         llm_response = await anthropic_client.async_chat(filter_prompt, max_tokens=100, temperature=0.1)
         logger.info(f"Filter LLM response: {llm_response}")
 
-        # Extract HUMAN or ROUTER from response (handle extra text)
-        matches_human_questions = "HUMAN" in llm_response.upper()
+        # Parse LLM response: check for ROUTER first since it's the safe default.
+        # Strip whitespace and compare the core token, not a substring match,
+        # to avoid false positives like "not a HUMAN request → ROUTER".
+        cleaned_response = llm_response.strip().upper()
+        if cleaned_response.startswith("ROUTER"):
+            matches_human_questions = False
+        elif cleaned_response.startswith("HUMAN"):
+            matches_human_questions = True
+        else:
+            # Ambiguous response — default to ROUTER to avoid false escalation
+            logger.warning(f"Filter LLM returned ambiguous response: '{llm_response}', defaulting to ROUTER")
+            matches_human_questions = False
 
         # Implement routing logic:
         # Priority 1: If question matches human support list → ALWAYS route to HUMAN
@@ -1203,7 +1112,7 @@ async def router_node(state: AgentState) -> dict:
         logger.error(f"Router error: {e}")
         return {"agent": "frontend_agent"}  # Default fallback
 def filter_to_route(state: AgentState) -> str:
-    filter_result = state.get("filter_result", "HUMAN")
+    filter_result = state.get("filter_result", "ROUTER")
     return filter_result
 
 async def human_support_node(state: AgentState) -> dict:
